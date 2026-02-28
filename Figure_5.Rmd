@@ -1,0 +1,876 @@
+---
+title: "Figure 5 and Supplementary Figure 6: Proteomics, NicheNet, and MetaNet"
+output: html_document
+date: "2024-08-29"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Load Libraries and Define Colors
+```{r setup, message=FALSE, warning=FALSE}
+library(DEP)
+library(factoextra)
+library(rafalib)
+library(circlize)
+library(dendextend)
+library(dendsort)
+library(ComplexHeatmap)
+library(gridBase)
+library(pheatmap)
+library(psych)
+library(clusterProfiler)
+library(enrichplot)
+library(ggVennDiagram)
+library(ggrepel)
+library(patchwork)
+library(dittoSeq)
+library(viridis)
+library(scuttle)
+library(SingleCellExperiment)
+library(nichenetr)
+library(OmnipathR)
+library(MetaNet)
+library(igraph)
+library(pcutils)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+
+my_color_group <- c(
+  "HIV+AS+" = "#ff6b6d",
+  "HIV-AS+" = "#ffa725",
+  "HIV+AS-" = "#A6CEE3",
+  "HIV-AS-" = "lightgrey"
+)
+```
+
+
+# Supplementary Figure 6A: Proteomics QC, Normalization, and PCA
+```{r Sup_Figure_6A_PCA}
+# Load and prepare mass spectrometry data
+data        <- read.csv("Figure 5 MassSpec normlized data.csv", header = TRUE, stringsAsFactors = FALSE)
+data_unique <- make_unique(data, "Genes", "Protein.Name", delim = ";")
+
+LFQ_columns <- 4:35
+meta <- data.frame(Group = rep(c("HIV-AS-", "HIV+AS-", "HIV-AS+", "HIV+AS+"), each = 8))
+rownames(meta) <- colnames(data)[LFQ_columns]
+
+experimental_design <- data.frame(
+  label     = colnames(data)[LFQ_columns],
+  condition = substr(colnames(data)[LFQ_columns], 1, 4),
+  replicate = 1:8
+)
+
+data_se <- make_se(data_unique, LFQ_columns, experimental_design)
+
+# Filter for proteins identified in all replicates of at least one condition
+data_filt <- filter_missval(data_se, thr = 1)
+
+# Bar plot: number of proteins identified per sample
+plot_numbers(data_filt)
+
+# VSN normalization and comparison boxplot
+data_norm <- normalize_vsn(data_filt)
+plot_normalization(data_filt, data_norm)
+
+# PCA
+norm_df <- t(data.frame(data_norm@assays@data@listData))
+rownames(norm_df) <- rownames(meta)
+res.pca <- prcomp(norm_df, center = TRUE, scale. = TRUE)
+fviz_eig(res.pca, addlabels = TRUE)
+
+pca_result <- data.frame(
+  PC1   = res.pca$x[, 1],
+  PC2   = res.pca$x[, 2],
+  Group = meta$Group
+)
+
+Fig5_Sup_A <- ggplot(data = pca_result, aes(x = PC1, y = PC2, col = Group)) +
+  geom_point(size = 3) +
+  theme_bw(base_size = 16) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line        = element_blank(),
+    axis.ticks       = element_blank(),
+    legend.position  = "right"
+  ) +
+  scale_color_manual(values = my_color_group) +
+  labs(x = "PC1 (41%)", y = "PC2 (7.9%)")
+Fig5_Sup_A
+```
+
+
+# Figure 5A: Circular Heatmap of log2 Fold-Change Across Groups
+```{r Figure_5A_circular_heatmap}
+# Test each group versus the ASNN control
+data_diff <- test_diff(data_norm, type = "manual",
+                       test = c("ASPP_vs_ASNN", "ASNP_vs_ASNN", "ASPN_vs_ASNN"))
+
+# Denote significant proteins: alpha = 0.5, lfc = log2(2)
+dep <- add_rejections(data_diff, alpha = 0.5, lfc = log2(2))
+data_results <- get_results(dep)
+
+# Extract log2 fold-change matrix
+plot_heatmap <- plot_heatmap(dep, type = "contrast",
+                             kmeans = FALSE, clustering_distance = "pearson",
+                             row_font_size = 10, k = 0, col_limit = 4,
+                             show_row_names = TRUE)
+dat_matrix           <- plot_heatmap@ht_list$`log2 Fold change`@matrix
+colnames(dat_matrix) <- c("HIV+AS-", "HIV-AS+", "HIV+AS+")
+
+# Scale rows for circular heatmap display
+cir1   <- t(scale(t(dat_matrix)))
+mycol  <- colorRamp2(c(-1.45, 0, 2.27), c("#0da9ce", "white", "#e74a32"))
+
+pdf(file = "Figure 5 A.pdf", width = 6, height = 6)
+
+# Circular layout: gap between first and last sector
+circos.par(gap.after = 30)
+circos.heatmap(cir1,
+  col             = mycol,
+  dend.side       = "inside",    # Dendrogram shown on inner ring
+  rownames.side   = "outside",   # Row names shown on outer ring
+  track.height    = 0.28,
+  rownames.col    = "black",
+  rownames.cex    = 0.5,
+  rownames.font   = 1,
+  bg.border       = "black",
+  cluster         = TRUE,
+  dend.track.height = 0.18,
+  dend.callback   = function(dend, m, si) {
+    color_branches(dend, k = 3, col = 1:15)  # Color dendrogram branches
+  }
+)
+
+# Add color legend
+lg <- Legend(title     = "Exp",
+             col_fun   = mycol,
+             direction = "vertical")
+grid.draw(lg)
+
+# Add column name labels on the outer track
+circos.track(
+  track.index = get.current.track.index(),
+  panel.fun   = function(x, y) {
+    if (CELL_META$sector.numeric.index == 1) {
+      cn <- colnames(cir1)
+      n  <- length(cn)
+      circos.text(
+        rep(CELL_META$cell.xlim[2], n) + convert_x(0.5, "mm"),
+        1:n + 5,
+        cn, cex = 0.6, adj = c(0, 0.5), facing = "inside"
+      )
+    }
+  },
+  bg.border = NA
+)
+circos.clear()
+dev.off()
+```
+
+
+# Figure 5B: Pseudobulk Proteomics vs scPS Pathway Score Correlation Heatmap
+```{r Figure_5B_correlation_heatmap}
+# Re-run with relaxed thresholds to get broader protein list
+dep <- add_rejections(data_diff, alpha = 0.5, lfc = log2(1))
+data_results <- get_results(dep)
+plot_heatmap <- plot_heatmap(dep, type = "contrast",
+                             kmeans = FALSE, clustering_distance = "pearson",
+                             row_font_size = 10, k = 0, col_limit = 4,
+                             show_row_names = TRUE)
+
+# Helper: extract upregulated proteins per group from a ComplexHeatmap object
+get_data_select_protein <- function(plot_heatmap,
+                                    data_results,
+                                    fdr_thresh   = 0.5,
+                                    fc_threshold = 1,
+                                    slot_name    = "log2 Fold change") {
+  dat_matrix <- plot_heatmap@ht_list[[slot_name]]@matrix
+  groups     <- colnames(dat_matrix)
+  out_list   <- vector("list", length(groups))
+  names(out_list) <- groups
+
+  # Build expected FDR column name robustly
+  safe_col <- function(g) {
+    base <- gsub("[^A-Za-z0-9]+", "_", g)
+    paste0(base, "_p.val")
+  }
+
+  for (g in groups) {
+    group_df <- data.frame(
+      external_gene_name = rownames(dat_matrix),
+      logFC              = dat_matrix[, g],
+      stringsAsFactors   = FALSE
+    )
+
+    # Locate FDR column with fallback
+    col_try <- safe_col(g)
+    if (!col_try %in% colnames(data_results)) {
+      alt <- paste0(gsub(" ", "_", g), "_p.val")
+      if (alt %in% colnames(data_results)) {
+        col_try <- alt
+      } else {
+        stop(sprintf("FDR column for group '%s' not found. Tried: '%s' and '%s'.",
+                     g, safe_col(g), alt))
+      }
+    }
+
+    fdr_df <- data.frame(
+      external_gene_name = data_results$name,
+      FDR                = data_results[[col_try]],
+      stringsAsFactors   = FALSE
+    )
+
+    merged <- merge(group_df, fdr_df, by = "external_gene_name", all.x = TRUE)
+    merged <- merged[merged$external_gene_name != "" & !is.na(merged$logFC),
+                     c("external_gene_name", "logFC", "FDR")]
+
+    # Label direction
+    l2thr        <- log2(fc_threshold)
+    merged$g1    <- "normal"
+    merged$g1[merged$logFC >  l2thr & merged$FDR < fdr_thresh] <- "up"
+    merged$g1[merged$logFC < -l2thr & merged$FDR < fdr_thresh] <- "down"
+
+    dat_up        <- merged[merged$g1 == "up", ]
+    dat_up$AS_HIV <- g
+    rownames(dat_up) <- dat_up$external_gene_name
+    out_list[[g]] <- dat_up
+  }
+
+  up_gene_vec <- unique(unlist(lapply(out_list, function(x) x$external_gene_name)))
+  return(list(per_group_up = out_list, up_gene_vec = up_gene_vec))
+}
+
+# Extract normalized proteomics data for upregulated proteins
+MassSpec_data_norm   <- data.frame(data_norm@assays@data@listData)
+data_select_protein  <- get_data_select_protein(plot_heatmap, data_results,
+                                                fdr_thresh = 0.5, fc_threshold = 1)
+MassSpec_data_norm   <- MassSpec_data_norm %>%
+  filter(rownames(MassSpec_data_norm) %in% data_select_protein$up_gene_vec)
+data1 <- data.frame(t(MassSpec_data_norm))
+rownames(data1) <- experimental_design$label
+
+# PMC-specific pathways for scPS pseudobulk scoring
+PMC_pathways <- c(
+  "Common Pathway of Fibrin Clot Formation",
+  "Defects of contact activation system (CAS) and kallikrein/kinin system (KKS)",
+  "Diseases of hemostasis",
+  "Formation of Fibrin Clot (Clotting Cascade)",
+  "Intrinsic Pathway of Fibrin Clot Formation",
+  "GP1b-IX-V activation signalling",
+  "Chemokine receptors bind chemokines",
+  "Prostacyclin signalling through prostacyclin receptor",
+  "Inhibition of voltage gated Ca2+ channels via Gbeta/gamma subunits",
+  "Gap junction assembly",
+  "Transport of connexons to the plasma membrane",
+  "Microtubule-dependent trafficking of connexons from Golgi to the plasma membrane",
+  "PKA activation in glucagon signalling",
+  "Glucagon-type ligand receptors",
+  "Glucagon signaling in metabolic regulation",
+  "Kinesins"
+)
+
+# Extract scPS scores per cell and aggregate per subject × cluster
+data_scps <- data.frame(
+  t(obj[["scPS"]]@layers$counts[rownames(obj[["scPS"]]) %in% PMC_pathways, ])
+)
+colnames(data_scps)          <- PMC_pathways
+data_scps$HTO_classification <- obj@meta.data$HTO_classification
+data_scps$cluster_num        <- obj@meta.data$cluster_num
+
+# Average per subject × cluster
+data_scps <- data_scps %>%
+  group_by(HTO_classification, cluster_num) %>%
+  summarize(across(
+    all_of(PMC_pathways),
+    ~ mean(.x, na.rm = TRUE),
+    .names = "average_{.col}"
+  ))
+colnames(data_scps) <- gsub("^average_", "", colnames(data_scps))
+
+# Pivot to wide format with cluster_pathway column names
+data_cluster_num <- data_scps %>%
+  pivot_longer(
+    cols     = -c(HTO_classification, cluster_num),
+    names_to = "pathway", values_to = "score"
+  ) %>%
+  mutate(pathway = paste0(cluster_num, "_", pathway)) %>%
+  dplyr::select(-cluster_num) %>%
+  pivot_wider(names_from = pathway, values_from = score) %>%
+  dplyr::select(!starts_with("Intermediate"))
+
+# Pearson correlation between proteomics and scPS pathway scores
+data2 <- data_cluster_num[, 2:ncol(data_cluster_num)] %>% as.data.frame()
+rownames(data2) <- data_cluster_num$HTO_classification
+data2 <- data2[rownames(data1), ]
+
+res <- corr.test(data1, data2, use = "pairwise", method = "pearson",
+                 adjust = "fdr", alpha = 0.05)
+pmt <- res$p.adj
+cmt <- res$r
+
+# Filter proteins with at least 5 significant correlations (FDR < 0.5)
+count_below <- apply(pmt, 1, function(row) sum(row < 0.5, na.rm = TRUE))
+count_below <- data.frame(protein = names(count_below), count = count_below)
+count_below <- count_below %>% filter(count > 5)
+
+count_below %>%
+  ggplot(aes(reorder(protein, count), count)) +
+  geom_col(aes(fill = count)) +
+  coord_flip() +
+  labs(x = "Protein") +
+  theme_classic() +
+  scale_y_continuous(breaks = seq(0, ncol(data_cluster_num) - 2, by = 5)) +
+  ggtitle("Proteins with count > 5 (adjusted p-value < 0.5)")
+
+# Subset correlation and p-value matrices to filtered proteins
+cmt.1 <- cmt[count_below$protein, ]
+pmt.1 <- pmt[count_below$protein, ]
+
+# Convert p-values to significance symbols
+if (!is.null(pmt.1)) {
+  ssmt        <- pmt.1 < 0.05
+  smt         <- pmt.1 > 0.05 & pmt.1 < 0.5
+  pmt.1[ssmt] <- "**"
+  pmt.1[smt]  <- "*"
+  pmt.1[!ssmt & !smt] <- ""
+} else {
+  pmt.1 <- FALSE
+}
+pmt.1 <- as.data.frame(pmt.1) %>% dplyr::select(where(~ !any(is.na(.))))
+cmt.1 <- cmt.1[, colnames(pmt.1)]
+
+# Annotation data frame for cluster color strip
+dfh            <- data.frame(group = sub("_.*", "", colnames(cmt.1)))
+rownames(dfh)  <- colnames(cmt.1)
+node_colors    <- setNames(
+  c("#FDBF6F", "#FF7F00", "#B15928", "#CCAFCA"),
+  c("CD14", "CD14-active", "CD16", "PMC")
+)
+
+# Save heatmap
+pdf(file = "Figure 5 B.pdf", width = 40, height = 18)
+pheatmap::pheatmap(
+  t(cmt.1),
+  scale                    = "none",
+  color                    = colorRampPalette(c("navy", "white", "red"))(50),
+  annotation_row           = dfh,
+  annotation_colors        = list(group = node_colors),
+  cluster_rows             = TRUE,
+  cutree_rows              = 1,
+  cutree_cols              = 2,
+  fontsize                 = 20,
+  number_color             = "black",
+  clustering_distance_row  = "binary",
+  display_numbers          = t(pmt.1),
+  fontsize_number          = 16,
+  angle_col                = 45
+)
+dev.off()
+```
+
+
+# Figure 5B: Circular Correlation Heatmap (circos)
+```{r Figure_5B_circos_heatmap}
+plot_df <- as.matrix(cmt.1)
+
+circos.clear()
+circos.par(start.degree = -30, gap.degree = 100, track.height = 0.4)
+circos.heatmap(plot_df,
+  col                = colorRamp2(c(-0.5, 0, 0.5), c("blue", "white", "red")),
+  cell.lwd           = 1,
+  bg.border          = "black",
+  bg.lty             = par("lty"),
+  bg.lwd             = par("lwd"),
+  cluster            = TRUE,
+  clustering.method  = "ward.D2",
+  distance.method    = "euclidean",
+  dend.side          = "inside",
+  dend.track.height  = 0.1,
+  rownames.side      = "outside",
+  rownames.cex       = 1,      # Row name font size
+  rownames.font      = par("font"),
+  cell.border        = NA,
+  rownames.col       = "black"
+)
+
+# Add column name labels on the outer ring
+circos.track(
+  track.index = get.current.track.index(),
+  panel.fun = function(x, y) {
+    if (CELL_META$sector.numeric.index == 1) {
+      cn <- colnames(plot_df)
+      n  <- length(cn)
+      circos.text(
+        rep(CELL_META$cell.xlim[2], n) + 0.5 * convert_x(1, "mm"),
+        0.5 * (1:n) + 1.2,
+        cn, adj = c(0, 0.5), cex = 1, facing = "inside"
+      )
+    }
+  },
+  bg.border = NA
+)
+
+# Add correlation legend (color matches the heatmap)
+lgd <- Legend(
+  title           = "Correlation",
+  title_position  = "leftcenter-rot",
+  title_gp        = gpar(fontsize = 10),
+  col_fun         = colorRamp2(c(-0.5, 0, 0.5), c("blue", "white", "red")),
+  direction       = "vertical",
+  border          = "black",
+  labels_gp       = gpar(fontsize = 8, col = "black", font = 3),
+  legend_width    = unit(0.5, "cm"),
+  legend_height   = unit(0.5, "cm")
+)
+grid.draw(lgd)
+```
+
+
+# Figure 5C: NicheNet Ligand-Receptor Analysis
+```{r Figure_5C_NicheNet}
+# Load NicheNet pre-computed databases
+lr_network          <- readRDS("NicheNet/lr_network_human_21122021.rds")
+signal_network      <- readRDS("NicheNet/signaling_network_human_21122021.rds")
+ligand_target_matrix <- readRDS("NicheNet/ligand_target_matrix_nsga2r_final.rds")
+weighted_networks   <- readRDS("NicheNet/weighted_networks_nsga2r_final.rds")
+
+# Database summary
+cat("Number of ligand-receptor pairs:", nrow(lr_network), "\n")
+cat("Number of unique ligands:", length(unique(lr_network$from)), "\n")
+cat("Number of unique receptors:", length(unique(lr_network$to)), "\n")
+cat("Ligand-target matrix dimensions:", dim(ligand_target_matrix), "\n")
+
+# Check whether genes of interest are present in the signaling network
+genes_check <- c("VAMP8", "RAB2A", "GAK", "ORAI1", "PTGR1", "ADRM1", "ZDHHC20",
+                 "ADCY6", "STIM1", "PAG1", "CD3G", "PTPN11", "TRPC6")
+list(
+  present_in_from = genes_check[genes_check %in% signal_network$from],
+  present_in_to   = genes_check[genes_check %in% signal_network$to],
+  missing_genes   = genes_check[!genes_check %in% c(signal_network$from, signal_network$to)]
+)
+
+# Build gene set for each signaling hub gene and export as GMT
+dat_sig <- signal_network[signal_network$from %in% genes_check, ]
+gs      <- lapply(split(dat_sig$to, dat_sig$from), unique)
+
+write_gmt <- function(gs, file) {
+  sink(file)
+  lapply(names(gs), function(i) {
+    cat(paste(c(i, "tmp", gs[[i]]), collapse = "\t"))
+    cat("\n")
+  })
+  sink()
+}
+write_gmt(gs, "NicheNet/NicheNet.gmt")
+
+# Dot plot of NicheNet gene set scores per cluster × group
+DefaultAssay(obj_small) <- "NicheNet"
+obj_small$group <- paste0(obj_small$cluster_num, obj_small$AS_HIV, "_")
+Idents(obj_small) <- "group"
+
+DotPlot(obj_small, features = names(predBind), dot.scale = 5) +
+  scale_size_area(max_size = 10) +
+  RotatedAxis() + xlab("") + ylab("") +
+  scale_color_gradientn(colors = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10)) +
+  theme_classic(base_size = 25) +
+  theme(axis.title.x = element_blank(),
+        axis.text.x  = element_text(angle = 90, hjust = 1))
+
+# Aggregate NicheNet scores across cells per cluster × group
+features <- names(predBind)
+metadata <- obj_small@meta.data
+sce      <- SingleCellExperiment(
+  assays  = list(counts = obj_small@assays$NicheNet@data),
+  colData = metadata
+)
+
+celltype_mean <- aggregateAcrossCells(
+  as(sce, "SingleCellExperiment"),
+  id            = DataFrame(label = sce$cluster_num, sample = sce$AS_HIV),
+  statistics    = "mean",
+  use.assay.type = "counts",
+  subset.row    = features
+)
+
+columnsToUse   <- c("cluster_num", "AS_HIV")
+colData(sce)   <- colData(sce) %>% data.frame() %>%
+  dplyr::select(all_of(columnsToUse)) %>% DataFrame()
+colnames(celltype_mean) <- paste0("cell", seq_len(ncol(celltype_mean)))
+
+# NicheNet heatmap
+p_pheatmap <- dittoHeatmap(
+  celltype_mean,
+  assay                  = "counts",
+  cluster_cols           = TRUE,
+  cluster_row            = TRUE,
+  scaled.to.max          = FALSE,
+  border_color           = "grey",
+  complex                = FALSE,
+  clustering_distance_rows = "euclidean",
+  clustering_method      = "complete",
+  cutree_cols            = 3,
+  scale                  = "row",
+  heatmap.colors         = colorRampPalette(c("lightblue", "white", "red"))(25),
+  annot.by               = c("cluster_num", "AS_HIV"),
+  annotation_colors      = list(
+    AS_HIV      = my_color_group,
+    cluster_num = my_color[c(4, 5, 7, 8)],
+    ncells      = plasma(100)
+  )
+)
+p_pheatmap
+
+pdf("Figure 5C NicheNet.pdf", width = 10, height = 4)
+p_pheatmap
+dev.off()
+```
+
+
+# Supplementary Figure 6B: Venn Diagram of Upregulated Proteins Across Groups
+```{r Sup_Figure_6B_Venn}
+dat_matrix           <- plot_heatmap@ht_list$`log2 Fold change`@matrix
+colnames(dat_matrix) <- c("HIV+AS-", "HIV-AS+", "HIV+AS+")
+Groups   <- c("HIV+AS-", "HIV-AS+", "HIV+AS+")
+
+# Proteins upregulated (log2FC > 0) in each group
+Genesets <- setNames(
+  lapply(Groups, function(group) rownames(dat_matrix)[dat_matrix[, group] > log2(1)]),
+  Groups
+)
+
+# Shared proteins across all groups
+Reduce(intersect, Genesets)
+which(sapply(Genesets, function(x) "ADRM1" %in% x))
+
+Fig5_Sup_B <- ggVennDiagram(Genesets,
+  category.names      = names(Genesets),
+  set_color           = c("#A6CEE3", "#ffa725", "#ff6b6d"),
+  set_size            = 3,
+  label               = "count",
+  label_color         = "black",
+  label_alpha         = 0,
+  label_size          = 5,
+  label_percent_digit = 1,
+  edge_size           = 1
+) + scale_fill_gradient(low = "white", high = "white")
+Fig5_Sup_B
+ggsave(filename = "Sup Figure 6 B.pdf", width = 5, height = 5, bg = "white")
+```
+
+
+# Supplementary Figure 6C–H: Per-Group GSEA Bar Plots and Network Plots
+```{r Sup_Figure_6C-H_GSEA}
+geneset <- read.gmt("Reactome_human.gmt")
+geneset <- geneset[geneset$term %in% top_markers$geneset, ]
+Groups  <- c("HIV+AS-", "HIV-AS+", "HIV+AS+")
+
+# Helper: run GSEA and return barplot + cnetplot for one group
+run_gsea_plot <- function(i, dat_matrix, Groups, Genesets, geneset, my_color_group) {
+  # Prepare ranked gene list
+  genelist <- dat_matrix[Genesets[[Groups[i]]], Groups[i]]
+  genelist <- genelist[order(genelist, decreasing = TRUE)]
+
+  # Run GSEA
+  egmt <- GSEA(genelist,
+               TERM2GENE      = geneset,
+               pvalueCutoff   = 1,
+               pAdjustMethod  = "fdr",
+               minGSSize      = 1,
+               maxGSSize      = 500000)
+
+  # Prepare result data frame
+  dt             <- data.frame(egmt)
+  dt$Description <- dt$ID
+  dt$Description <- factor(dt$Description, levels = rev(dt$Description))
+  dt             <- dt %>% filter(NES > 0) %>% arrange(desc(NES)) %>% slice_head(n = 10)
+
+  # Bar plot
+  p_bar <- ggplot() +
+    geom_bar(data = dt,
+             aes(x = NES, y = reorder(Description, NES)),
+             width = 0.5, fill = my_color_group[Groups[i]], stat = "identity") +
+    theme_classic() +
+    scale_x_continuous(expand = c(0, 0)) +
+    theme(axis.text.y = element_blank()) +
+    geom_text(data = dt,
+              aes(x = 0.01, y = Description, label = Description),
+              size = 4.5, hjust = 0) +
+    geom_text(data = dt,
+              aes(x = 0.01, y = Description, label = core_enrichment),
+              color = "darkgrey", size = 4, fontface = "italic", hjust = 0, vjust = 2.3) +
+    labs(x = "Normalized Enrichment Score (NES)", y = "Pathways")
+
+  # cnetplot
+  p_net <- cnetplot(egmt,
+                    showCategory = 10,
+                    foldChange   = genelist,
+                    circular     = TRUE,
+                    colorEdge    = TRUE,
+                    size_item    = 5) +
+    scale_color_gradientn(colours = c("white", "red"))
+
+  return(list(bar = p_bar, net = p_net, gsea = dt))
+}
+
+# Run for all three groups
+results  <- lapply(1:3, run_gsea_plot,
+                   dat_matrix    = dat_matrix,
+                   Genesets      = Genesets,
+                   Groups        = Groups,
+                   geneset       = geneset,
+                   my_color_group = my_color_group)
+
+p_list   <- lapply(results, function(x) x$bar)
+p2_list  <- lapply(results, function(x) x$net)
+egmt_res <- lapply(lapply(results, function(x) x$gsea), rownames)
+
+# Shared pathways across all three groups
+Reduce(intersect, egmt_res)
+
+# Combine and save
+combined_plot_0 <- Fig5_Sup_A + Fig5_Sup_B + plot_layout(widths = c(1, 1))
+combined_plot_1 <- p_list[[1]] + p2_list[[1]] + plot_layout(widths = c(1.5, 1))
+combined_plot_2 <- p_list[[2]] + p2_list[[2]] + plot_layout(widths = c(1.5, 1))
+combined_plot_3 <- p_list[[3]] + p2_list[[3]] + plot_layout(widths = c(1.5, 1))
+combined_plot   <- combined_plot_1 / combined_plot_2 / combined_plot_3 +
+  plot_layout(guides = "keep")
+
+ggsave("Sup Figure 6.pdf", width = 15, height = 18)
+combined_plot <- combined_plot_0 / combined_plot + plot_layout(heights = c(1, 6))
+combined_plot
+```
+
+
+# Supplementary Figure 6: Enrichment Bubble Plot (HIV+AS+ Upregulated Proteins)
+```{r Sup_Figure_6_enrichment_bubble}
+enrichplot_1 <- enricher(
+  gene          = data_select_protein$up_gene_vec,
+  pvalueCutoff  = 0.5,
+  qvalueCutoff  = 0.5,
+  TERM2GENE     = geneset
+)
+dotplot(enrichplot_1, x = "GeneRatio", color = "p.adjust", showCategory = 10)
+
+combined_df             <- data.frame(enrichplot_1)
+combined_df$Description <- str_wrap(combined_df$Description, width = 50)
+
+# Bubble plot
+ggplot(combined_df, aes(x = GeneRatio, y = fct_reorder(Description, GeneRatio))) +
+  geom_point(aes(size = Count, fill = p.adjust), shape = 21, color = "white") +
+  scale_fill_gradient(low = "#E27371", high = "#5D82A7") +
+  labs(title = "", y = "", x = "GeneRatio") +
+  guides(fill = guide_colorbar(reverse = TRUE, order = 1)) +
+  theme_bw(base_size = 18) +
+  theme(
+    axis.text.y      = element_text(color = "black"),
+    strip.text       = element_text(hjust = 0.5, color = "black"),
+    strip.background = element_rect(fill = "white"),
+    axis.line        = element_blank(),
+    axis.ticks       = element_blank(),
+    axis.text        = element_text(size = 16),
+    legend.text      = element_text(size = 16)
+  )
+
+ggsave(filename = "MassSpec Reactome Enrichment.pdf", width = 10, height = 13.5, bg = "white")
+
+# Enrichment bar plot
+dt             <- data.frame(enrichplot_1)
+dt$Description <- factor(dt$Description, levels = rev(dt$Description))
+dt$GeneRatio   <- sapply(dt$GeneRatio, function(x) eval(parse(text = x)))
+
+Fig5_B_sup <- ggplot() +
+  geom_bar(data = dt,
+           aes(x = GeneRatio, y = reorder(Description, GeneRatio)),
+           width = 0.5, fill = "orange", stat = "identity") +
+  theme_classic() +
+  scale_x_continuous(expand = c(0, 0)) +
+  theme(axis.text.y = element_blank()) +
+  geom_text(data = dt,
+            aes(x = 0.01, y = Description, label = Description),
+            size = 4.5, hjust = 0) +
+  geom_text(data = dt,
+            aes(x = 0.01, y = Description, label = geneID),
+            color = "darkgrey", size = 4, fontface = "italic", hjust = 0, vjust = 2.3) +
+  labs(x = "GeneRatio", y = "Pathways")
+Fig5_B_sup
+
+# Sort and label pathways for bubble plot
+dt       <- dt[order(dt$GeneRatio, decreasing = TRUE), ]
+dt$ID    <- factor(dt$ID, levels = dt$ID)
+dt$xlab  <- 1:nrow(dt)
+label      <- dt$ID
+data_label <- dt[dt$ID %in% label, ]
+data_label$col <- "black"
+
+ggplot(data = dt, aes(x = xlab, y = GeneRatio)) +
+  geom_point(aes(size = Count, alpha = -log10(p.adjust)),
+             shape = 21, stroke = 0.7, fill = my_color_PMC[3], colour = "black") +
+  scale_size_continuous(range = c(1, 10)) +
+  xlab("") + ylab("GeneRatio") +
+  theme_classic(base_size = 16) +
+  scale_x_continuous(breaks = seq(0, 50, by = 5), labels = seq(0, 50, by = 5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.05))) +
+  theme(
+    legend.text       = element_text(size = 16),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.text         = element_text(face = "bold")
+  ) +
+  guides(
+    size  = guide_legend(title = "Size"),
+    alpha = guide_legend(title = expression("-Log"[10] * " (p-value)"))
+  ) +
+  geom_text_repel(data = dt,
+                  aes(x = xlab, y = GeneRatio, label = ID),
+                  size               = 6,
+                  color              = data_label$col,
+                  force              = 10,
+                  point.padding      = 0.5,
+                  min.segment.length = 0,
+                  hjust              = 1,
+                  segment.color      = "grey20",
+                  segment.size       = 0.1,
+                  segment.alpha      = 0.8,
+                  nudge_y            = -0.1)
+
+cnetplot(enrichplot_1, showCategory = 30,
+         circular = TRUE, colorEdge = TRUE, size_item = 5)
+```
+
+
+# Supplementary Figure 5: MetaNet Multi-Omics Correlation Network
+```{r Sup_Figure_5_MetaNet}
+library(MetaNet)
+library(igraph)
+library(pcutils)
+
+# Build pseudobulk gene expression matrix per subject × cluster using PMC pathway genes
+gene_list <- predBind[names(predBind) %in% PMC_pathways]
+all_genes <- unique(unlist(lapply(geneIds(gene_list), identity)))
+all_genes <- c(all_genes, intersect(mylist$PMC, mylist$`in vitro PMC`))
+
+# Extract SCT expression data and aggregate per subject × cluster
+data_genes <- data.frame(
+  t(obj[["SCT"]]@data[rownames(obj[["SCT"]]) %in% all_genes, ])
+)
+data_genes$HTO_classification <- obj@meta.data$HTO_classification
+data_genes$cluster_num        <- obj@meta.data$cluster_num
+
+data_genes <- data_genes %>%
+  group_by(HTO_classification, cluster_num) %>%
+  summarize(across(
+    all_of(colnames(data_genes)[!(colnames(data_genes) %in% c("HTO_classification", "cluster_num"))]),
+    ~ mean(.x, na.rm = TRUE),
+    .names = "average_{.col}"
+  ))
+colnames(data_genes) <- gsub("^average_", "", colnames(data_genes))
+
+# Pivot to wide format with cluster_gene column names
+data_PMC <- data_genes %>%
+  pivot_longer(
+    cols     = -c(HTO_classification, cluster_num),
+    names_to = "gene", values_to = "score"
+  ) %>%
+  mutate(gene = paste0(cluster_num, "_", gene)) %>%
+  dplyr::select(-cluster_num) %>%
+  pivot_wider(names_from = gene, values_from = score) %>%
+  as.data.frame()
+
+rownames(data_PMC) <- data_PMC$HTO_classification
+data_PMC <- data_PMC[, -1]
+data_PMC <- data_PMC[rownames(data1), ]
+data_PMC <- data_PMC %>% dplyr::select(!starts_with("Intermediate"))
+
+# Cluster annotation for transcriptomic nodes
+data_PMC_g            <- data.frame(cluster = sub("_.*", "", colnames(data_PMC)))
+rownames(data_PMC_g)  <- colnames(data_PMC)
+
+# Build multi-omics network: proteomics vs transcriptomics (Spearman, |r| >= 0.6, p < 0.05)
+multi1 <- multi_net_build(
+  list(Proteomic = data1, Transcriptome = data_PMC),
+  method      = "spearman",
+  r_threshold = 0.6,
+  p_threshold = 0.05
+)
+
+# Annotate nodes with cluster class and abundance
+multi1_with_anno <- c_net_set(multi1, data_PMC_g, vertex_class = "cluster")
+multi1_with_anno <- c_net_set(multi1_with_anno,
+                              data.frame("Abundance1" = colSums(data_PMC)),
+                              vertex_size = paste0("Abundance", 1))
+
+# Shared plot parameters
+node_colors <- setNames(
+  c("#b3de69", "#FDBF6F", "#FF7F00", "#B15928", "#CCAFCA"),
+  c("Proteomic", "CD14", "CD14-active", "CD16", "PMC")
+)
+params_list <- list(
+  labels_num           = 100,
+  vertex.color         = node_colors,
+  vertex_size_range    = c(3, 10),
+  vertex.label.color   = "black",
+  edge_width_range     = c(0.5, 3),
+  edge.color           = c("#80b1d3", "#fb8072"),
+  edge.curved          = 0.5,
+  legend               = TRUE,
+  legend_number        = TRUE,
+  group_legend_order   = c("Proteomic", "Transcriptome"),
+  group_legend_title   = c("Proteomic", "Transcriptome"),
+  edge_legend_title    = "Correlation",
+  edge_legend_order    = c("positive", "negative"),
+  size_legend          = TRUE,
+  size_legend_title    = "Abundance",
+  width_legend         = TRUE,
+  width_legend_title   = "abs(r)",
+  lty_legend           = TRUE,
+  lty_legend_title     = "Omics relationship",
+  gray_color           = "gray80"
+)
+
+# Filter to inter-omics edges only and plot
+multi2 <- c_net_filter(multi1_with_anno, v_group %in% c("Proteomic", "Transcriptome")) %>%
+  c_net_filter(., e_class == "inter", mode = "e")
+
+pdf(file = "Sup Figure 5 MetaNet inter-omics network.pdf", width = 7.5, height = 5, bg = "white")
+c_net_plot(multi2, params_list = params_list)
+dev.off()
+
+# Export edge table
+edges_df <- igraph::as_data_frame(multi2, what = "edges")
+write.csv(edges_df, "Sup Figure 6A MetaNet.csv", row.names = FALSE)
+
+# Full network plot (all edges)
+pdf(file = "Sup Figure 5 MetaNet full network.pdf", width = 8, height = 5, bg = "white")
+c_net_plot(multi1_with_anno, params_list = params_list)
+dev.off()
+
+# Highlight 2nd-order neighborhood for selected PMP proteins
+PMPs_proteins <- c("ADCY6", "TRPC6", "PTPN11", "VAV1", "ORAI1")
+
+params_highlight <- list(
+  labels_num         = 0,
+  vertex_size_range  = c(3, 10),
+  vertex.label.color = "#d9d9d9",
+  edge_width_range   = c(0.5, 3),
+  edge.color         = c("#80b1d3", "#fb8072"),
+  edge.curved        = 0.5,
+  legend             = TRUE,
+  group_legend_order = c("Proteomic", "Transcriptome"),
+  group_legend_title = c("Proteomic", "Transcriptome"),
+  edge_legend_title  = "Correlation",
+  edge_legend_order  = c("positive", "negative"),
+  lty_legend_title   = "Omics relationship"
+)
+
+# Example: highlight neighborhood for first PMP protein
+i     <- 1
+nodes <- PMPs_proteins[i]
+nodes <- V(c_net_neighbors(multi1_with_anno, nodes, order = 2))$name
+nodes <- c(PMPs_proteins[i], nodes[grepl("_", nodes)])
+g_hl  <- c_net_highlight(multi1_with_anno, nodes = nodes)
+c_net_plot(g_hl, params_list = params_highlight, main = "Network")
+```

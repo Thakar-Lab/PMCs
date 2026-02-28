@@ -1,0 +1,296 @@
+---
+title: "Figure 1"
+output: html_document
+date: "2024-08-29"
+editor_options: 
+  chunk_output_type: console
+---
+
+# Load Libraries and Colors
+```{r setup, include=FALSE}
+library(grid)
+library(dplyr)
+library(UpSetR)
+library(ggplot2)
+library(tidyverse)
+library(ggVennDiagram)
+library(Seurat)
+library(reshape2)
+library(S4Vectors)
+library(tibble)
+library(SingleCellExperiment)
+library(cowplot)
+library(ggrepel)
+library(clusterProfiler)
+library(RColorBrewer)
+
+my_color <- c(
+  "Intermediate"              = "#A6CEE3",
+  "Intermediate-metabolic"    = "#1F78B4",
+  "Intermediate-interferon"   = "#F26B8A",
+  "CD14"                      = "#FDBF6F",
+  "CD14-active"               = "#FF7F00",
+  "NK/proinflammatory"        = "#3E9F32",
+  "CD16"                      = "#B15928",
+  "PMC"                       = "#CCAFCA"
+)
+
+my_color_group <- c(
+  "ASPP" = "#ff6b6d",
+  "ASPN" = "#ffa725",
+  "ASNP" = "#A6CEE3",
+  "ASNN" = "lightgrey"
+)
+
+my_color_PMC <- c(
+  "nonPMC"          = "#F9CB80",
+  "PMC"             = "#CCAFCA",
+  "in vitro nonPMC" = "#29A15C",
+  "in vitro PMC"    = "#FCB431",
+  "in vitro Mφ"     = "#529AC9",
+  "in vitro PMC Mφ" = "#CC4A74"
+)
+
+# Load scRNA-seq data
+obj <- readRDS("HIV_AS_monocyte.rds")
+DefaultAssay(obj) <- "SCT"
+Idents(obj) <- "cluster_num"
+my_levels <- c("CD14", "CD14-active", "CD16", "PMC", "Intermediate", "Intermediate-metabolic", "Intermediate-interferon")
+Idents(obj) <- factor(x = Idents(obj), levels = my_levels)
+```
+
+
+# Figure 1B–E
+```{r Figure_1B-E}
+# Figure 1B: UMAP
+p_umap <- DimPlot(
+  obj, reduction = "umap", label = FALSE, label.size = 8,
+  group.by = "cluster_num", pt.size = 0.5, raster = FALSE,
+  repel = TRUE, cols = my_color, alpha = 0.5
+) +
+  ggtitle("") +
+  theme_classic(base_size = 25)
+p_umap
+
+# Figure 1C: Total number of cells per cluster
+df_meta <- obj@meta.data %>% mutate(Cluster = Idents(obj))
+id_cols <- c("orig.ident", "HTO_classification", "AS_HIV", "Cluster")
+df_meta_sub <- df_meta[id_cols]
+
+df_meta_sub_group <- df_meta_sub %>%
+  dplyr::group_by(Cluster) %>%
+  dplyr::summarize(total_cells = dplyr::n())
+
+plt1 <- ggplot(data = df_meta_sub_group, aes(x = Cluster, y = total_cells, fill = Cluster)) +
+  geom_bar(stat = "identity") +
+  theme_classic(base_size = 25) +
+  scale_fill_manual(values = my_color) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank()
+  ) +
+  ylab("") +
+  NoLegend()
+
+# Figure 1D: Proportion of cells per group per cluster
+df_meta_sub_group <- df_meta_sub %>%
+  group_by(Cluster, AS_HIV, .drop = FALSE) %>%
+  summarize(value = n()) %>%
+  ungroup() %>%
+  filter(!is.na(AS_HIV))
+
+plt2 <- ggplot(df_meta_sub_group, aes(x = Cluster, fill = AS_HIV, y = value)) +
+  geom_bar(position = "fill", stat = "identity") +
+  theme_classic(base_size = 25) +
+  ylab("") +
+  scale_fill_manual(
+    name   = "Group",
+    values = my_color_group,
+    labels = c("ASPP" = "HIV+AS+", "ASNP" = "HIV+AS-", "ASPN" = "HIV-AS+", "ASNN" = "HIV-AS-")
+  ) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x  = element_text(angle = 45, hjust = 1)
+  )
+plt2
+
+# Figure 1E: Cluster-specific DE genes (dot plot)
+library(GEB)
+library(openxlsx)
+DefaultAssay(obj) <- "SCT"
+
+housekeeping_genes <- read.xlsx("Housekeep gene set.xlsx")
+cluster_marker <- read.csv("Figure 1E Cluster-specific genes.csv")
+cluster_marker <- cluster_marker[!grepl("^MT-|^MT|\\.|^(RPS|RPL)", cluster_marker$gene), ]
+cluster_marker <- cluster_marker[!cluster_marker$gene %in% housekeeping_genes$Symbol, ]
+
+cluster_marker <- cluster_marker %>%
+  mutate(cluster = factor(cluster, levels = my_levels)) %>%
+  arrange(cluster)
+
+top_markers <- cluster_marker %>%
+  group_by(cluster) %>%
+  filter(avg_log2FC > log2(1.5) & p_val_adj < 0.05) %>%
+  filter(pct.1 > 0.1 | pct.2 > 0.1) %>%
+  arrange(desc(avg_log2FC), p_val_adj) %>%
+  slice_head(n = 10)
+
+top_markers <- split(top_markers$gene, top_markers$cluster)
+top_markers$CD14 <- c(top_markers$CD14, "CD14")
+top_markers$CD16 <- c(setdiff(top_markers$CD16, "FCGR3A"), "FCGR3A")
+
+p <- DotPlot(obj, features = top_markers, dot.scale = 5) +
+  scale_size_area(max_size = 10) +
+  RotatedAxis() +
+  xlab("") + ylab("") +
+  scale_color_gradientn(colors = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10)) +
+  theme_classic(base_size = 25) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x  = element_text(angle = 90, hjust = 1),
+    axis.text.y  = element_blank()
+  )
+p
+
+# Combine and save Figure 1B–E
+library(patchwork)
+combined_plot <- plt1 / plt2 + plot_layout(guides = "collect")
+combined_plot <- p_umap + combined_plot + plot_layout(widths = c(1.2, 1))
+combined_plot <- combined_plot / p + plot_layout(heights = c(2, 1))
+ggsave(plot = combined_plot, filename = "Figure 1B-E.pdf", width = 20, height = 13, bg = "white")
+```
+
+
+# Supplementary Figure 2A: Nebulosa Feature Plot
+```{r Sup_Figure_2A}
+library(Nebulosa)
+library(scCustomize)
+DefaultAssay(obj) <- "SCT"
+
+features <- c("CD14", "FCGR3A")
+
+FeaturePlot_scCustom(
+  seurat_object = obj,
+  features      = features,
+  colors_use    = viridis_plasma_dark_high,
+  na_color      = "lightgray",
+  num_columns   = 5,
+  combine       = TRUE,
+  keep.scale    = "all",
+  label         = TRUE
+)
+
+ggsave(
+  "Sup Figure 2A.tiff",
+  plot        = last_plot(),
+  width       = 15,
+  height      = 6,
+  bg          = "white",
+  dpi         = 300,
+  compression = "lzw"   # TIFF compression
+)
+```
+
+
+# Supplementary Figure 2B: Cluster-Specific Pathways / Gene Sets
+```{r Sup_Figure_2B}
+cluster_marker <- read.csv("Sup Fig 1B Cluster-specific gene sets.csv")
+cluster_marker <- cluster_marker[!grepl("Xenobiotics", cluster_marker$gene), ]
+cluster_marker <- cluster_marker[!grepl("olfactory",   cluster_marker$gene), ]
+
+top_markers <- cluster_marker %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC)) %>%
+  filter(avg_log2FC > 1.5 & p_val_adj < 0.05) %>%
+  slice_head(n = 5)
+
+DefaultAssay(obj) <- "scPS"
+
+CD14_pathways <- c(
+  "ERBB2 Activates PTK6 Signaling",
+  "PI3K events in ERBB4 signaling",
+  "Apoptotic cleavage of cell adhesion proteins"
+)
+
+CD14_active_pathways <- c(
+  "Free fatty acids regulate insulin secretion",
+  "Organic cation transport",
+  "Activation of PPARGC1A (PGC-1alpha) by phosphorylation",
+  "Transport of organic anions",
+  "POU5F1 (OCT4), SOX2, NANOG activate genes related to proliferation"
+)
+
+CD16_pathways <- c(
+  "RNA Polymerase I Promoter Opening",
+  "Metallothioneins bind metals",
+  "Activation of Matrix Metalloproteinases"
+)
+
+Intermediate_interferon_pathways <- c(
+  "Erythrocytes take up carbon dioxide and release oxygen",
+  "O2/CO2 exchange in erythrocytes",
+  "Scavenging of heme from plasma"
+)
+
+Intermediate_metabolic_pathways <- c(
+  "Regulation of gene expression in beta cells",
+  "Ketone body metabolism"
+)
+
+PMC_pathways <- c(
+  "Common Pathway of Fibrin Clot Formation",
+  "Diseases of hemostasis",
+  "Formation of Fibrin Clot (Clotting Cascade)"
+)
+
+features <- c(
+  CD14_pathways, CD14_active_pathways, CD16_pathways,
+  Intermediate_metabolic_pathways, Intermediate_interferon_pathways, PMC_pathways
+)
+
+p1 <- DotPlot(obj, features = features, assay = "scPS", dot.scale = 5) +
+  scale_size_area(max_size = 5) +
+  coord_flip() +
+  guides(size = guide_legend("Percent Expression")) +
+  scale_color_gradientn(colors = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10)) +
+  theme_classic(base_size = 25) +
+  theme(
+    panel.grid  = element_blank(),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  ) +
+  xlab("") + ylab("")
+p1
+```
+
+
+# Supplementary Figure 2C: Cluster-Specific Transcription Factors
+```{r Sup_Figure_2C}
+cluster_marker <- read.csv("Sup Fig 1C Cluster-specific TFs.csv")
+
+top_markers <- cluster_marker %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC)) %>%
+  filter(avg_log2FC > log2(1.5) & p_val_adj < 0.05) %>%
+  slice_head(n = 5)
+
+DefaultAssay(obj) <- "TF_scPS"
+features <- unique(unlist(split(top_markers$gene, top_markers$cluster)))
+
+p2 <- DotPlot(obj, features = features, assay = "TF_scPS", dot.scale = 5) +
+  scale_size_area(max_size = 5) +
+  coord_flip() +
+  guides(size = guide_legend("Percent Expression")) +
+  scale_color_gradientn(colors = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10)) +
+  theme_classic(base_size = 25) +
+  theme(
+    panel.grid  = element_blank(),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  ) +
+  xlab("") + ylab("")
+p2
+
+# Combine and save Supplementary Figure 2B–C
+library(patchwork)
+p2 + p1 + plot_layout(guides = "collect", widths = c(1.5, 2))
+ggsave(filename = "Sup Fig 2B-C.pdf", width = 25, height = 10, bg = "white")
+```

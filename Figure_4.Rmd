@@ -1,0 +1,330 @@
+---
+title: "Figure 4: MAPK/ROS Pathway Gene Sets and p90RSK Flow Cytometry"
+output: html_document
+date: "2024-08-29"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Load Libraries and Define Colors
+```{r setup, message=FALSE, warning=FALSE}
+library(scCustomize)
+library(ComplexHeatmap)
+library(readxl)
+library(openxlsx)
+library(dplyr)
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(MASS)
+library(FSA)
+
+# Group color palette
+my_color_group <- c(
+  "HIV+AS+" = "#ff6b6d",
+  "HIV-AS+" = "#ffa725",
+  "HIV+AS-" = "#A6CEE3",
+  "HIV-AS-" = "lightgrey"
+)
+
+my_levels <- c("HIV-AS-", "HIV+AS-", "HIV-AS+", "HIV+AS+")
+
+# Add readable group label to Seurat object
+obj$group <- ifelse(obj$AS_HIV == "ASNN", "HIV-AS-",
+             ifelse(obj$AS_HIV == "ASNP", "HIV+AS-",
+             ifelse(obj$AS_HIV == "ASPN", "HIV-AS+",
+             ifelse(obj$AS_HIV == "ASPP", "HIV+AS+", NA))))
+```
+
+
+# Figure 4A: Clustered Dot Plots of Gene Sets Across Clusters
+```{r Figure_4A_CD14_CD14active}
+# Gene sets of interest
+GS_features <- c(
+  "RAF-independent MAPK1/3 activation",
+  "MAPK3 (ERK1) activation",
+  "Oncogenic MAPK signaling",
+  "Signalling to ERKs",
+  "Prolonged ERK activation events",
+  "ERK/MAPK targets",
+  "Nuclear events mediated by NFE2L2",
+  "KEAP1-NFE2L2 pathway",
+  "GSK3B and BTRC:CUL1-mediated-degradation of NFE2L2",
+  "ROS and RNS production in phagocytes",
+  "SUMOylation of immune response proteins"
+)
+
+plots <- list()
+
+# CD14
+Idents(obj) <- "cluster_num"
+obj_downsample <- subset(x = obj, idents = "CD14")
+Idents(obj_downsample) <- factor(obj_downsample$group, levels = my_levels)
+plots[["CD14"]] <- Clustered_DotPlot(
+  seurat_object     = obj_downsample,
+  assay             = "scPS",
+  cluster_ident     = FALSE,
+  x_lab_rotate      = 90,
+  row_names_side    = "left",
+  row_label_size    = 12,
+  column_label_size = 12,
+  show_ident_colors = TRUE,
+  show_ident_legend = TRUE,
+  flip              = FALSE,
+  cluster_feature   = FALSE,
+  colors_use_exp    = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10),
+  features          = GS_features,
+  k                 = 1,
+  colors_use_idents = rev(my_color_group),
+  seed              = 12345
+)[[2]]
+
+# CD14-active
+Idents(obj) <- "cluster_num"
+obj_downsample <- subset(x = obj, idents = "CD14-active")
+Idents(obj_downsample) <- factor(obj_downsample$group, levels = my_levels)
+plots[["CD14-active"]] <- Clustered_DotPlot(
+  seurat_object     = obj_downsample,
+  assay             = "scPS",
+  cluster_ident     = FALSE,
+  x_lab_rotate      = 90,
+  row_names_side    = "left",
+  row_label_size    = 12,
+  column_label_size = 12,
+  show_ident_colors = TRUE,
+  flip              = FALSE,
+  cluster_feature   = FALSE,
+  colors_use_exp    = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10),
+  features          = GS_features,
+  k                 = 1,
+  colors_use_idents = rev(my_color_group),
+  seed              = 12345
+)[[2]]
+
+# Draw CD14 and CD14-active side by side
+# Save: width = 25, height = 6
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(nrow = 1, ncol = 3)))
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 2))
+draw(plots[["CD14"]], newpage = FALSE)
+popViewport()
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 3))
+draw(plots[["CD14-active"]], newpage = FALSE)
+popViewport()
+```
+
+```{r Figure_4A_CD16_PMC}
+# CD16
+Idents(obj) <- "cluster_num"
+obj_downsample <- subset(x = obj, idents = "CD16")
+Idents(obj_downsample) <- factor(obj_downsample$group, levels = my_levels)
+plots[["CD16"]] <- Clustered_DotPlot(
+  seurat_object     = obj_downsample,
+  assay             = "scPS",
+  cluster_ident     = FALSE,
+  x_lab_rotate      = 90,
+  row_names_side    = "left",
+  row_label_size    = 12,
+  column_label_size = 12,
+  show_ident_colors = TRUE,
+  show_ident_legend = TRUE,
+  flip              = FALSE,
+  cluster_feature   = FALSE,
+  colors_use_exp    = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10),
+  features          = GS_features,
+  k                 = 1,
+  colors_use_idents = rev(my_color_group),
+  seed              = 12345
+)[[2]]
+
+# PMC
+Idents(obj) <- "cluster_num"
+obj_downsample <- subset(x = obj, idents = "PMC")
+Idents(obj_downsample) <- factor(obj_downsample$group, levels = my_levels)
+plots[["PMC"]] <- Clustered_DotPlot(
+  seurat_object     = obj_downsample,
+  assay             = "scPS",
+  cluster_ident     = FALSE,
+  x_lab_rotate      = 90,
+  row_names_side    = "left",
+  row_label_size    = 12,
+  column_label_size = 12,
+  show_ident_colors = TRUE,
+  flip              = FALSE,
+  cluster_feature   = FALSE,
+  colors_use_exp    = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10),
+  features          = GS_features,
+  k                 = 1,
+  colors_use_idents = rev(my_color_group),
+  seed              = 12345
+)[[2]]
+
+# Draw CD16 and PMC side by side
+# Save: width = 25, height = 6
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(nrow = 1, ncol = 3)))
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 2))
+draw(plots[["CD16"]], newpage = FALSE)
+popViewport()
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 3))
+draw(plots[["PMC"]], newpage = FALSE)
+popViewport()
+```
+
+
+# Figure 4B: CD14 p90RSK Flow Cytometry Data
+
+## Load and Reshape Data
+```{r Figure_4B_load_data}
+dat <- data.frame(openxlsx::read.xlsx(
+  "Figure 4C-D CD14 p90RSK flow cytometry data.xlsx", sheet = 1
+))
+dat$Group <- paste0(dat$Cohort, dat$AS.status)
+
+dat_long <- dat %>%
+  dplyr::select(c("Participant.ID",
+                   "Basal.CD14..Mono.p90RSK.MFI", "Basal..CD14.p90RSK.",
+                   "H2O2.CD14..Mono.p90RSK.MFI",  "H2O2..CD14.p90RSK.",
+                   "Group")) %>%
+  pivot_longer(
+    cols = c("Basal.CD14..Mono.p90RSK.MFI", "Basal..CD14.p90RSK.",
+             "H2O2.CD14..Mono.p90RSK.MFI",  "H2O2..CD14.p90RSK."),
+    names_to  = "Treatment_1",
+    values_to = "Expression"
+  ) %>%
+  filter(!is.na(Expression)) %>%
+  mutate(
+    Treatment = case_when(
+      endsWith(Treatment_1, "Basal.CD14..Mono.p90RSK.MFI") ~ "p90RSK Basal MFI",
+      endsWith(Treatment_1, "H2O2.CD14..Mono.p90RSK.MFI")  ~ "p90RSK H202 MFI",
+      endsWith(Treatment_1, "Basal..CD14.p90RSK.")          ~ "p90RSK Basal",
+      endsWith(Treatment_1, "H2O2..CD14.p90RSK.")           ~ "p90RSK H202",
+      TRUE                                                   ~ NA_character_
+    )
+  )
+
+dat_long$Group     <- factor(dat_long$Group,     levels = c("HIV-AS-", "HIV+AS-", "HIV-AS+", "HIV+AS+"))
+dat_long$Treatment <- factor(dat_long$Treatment, levels = c("p90RSK Basal", "p90RSK H202", "p90RSK Basal MFI", "p90RSK H202 MFI"))
+```
+
+## Check Normality Assumptions
+```{r Figure_4B_normality}
+i <- 1
+dat_sub <- dat_long %>% filter(Treatment == unique(dat_long$Treatment)[i])
+
+# Fit linear model and check residuals
+model <- lm(Expression ~ Group, data = dat_sub)
+ggqqplot(residuals(model))
+shapiro_test(residuals(model))
+
+# Box-Cox transformation to find optimal lambda
+bc <- boxcox(model)
+lambda_opt <- bc$x[which.max(bc$y)]
+lambda_opt
+
+dat_sub <- dat_sub %>% mutate(Expression_boxcox = Expression ^ lambda_opt)
+model_bc <- lm(Expression_boxcox ~ Group, data = dat_sub)
+ggqqplot(residuals(model_bc))
+shapiro_test(residuals(model_bc))
+```
+
+## Kruskal-Wallis and Dunn Post-Hoc Tests
+```{r Figure_4B_statistics}
+# Initialize results list
+dunn_results <- list()
+treatments   <- unique(dat_long$Treatment)
+
+# Iterate over each treatment condition
+for (i in seq_along(treatments)) {
+  treatment_i <- treatments[i]
+  dat_sub     <- dat_long %>% filter(Treatment == treatment_i)
+
+  # Skip if fewer than 2 groups
+  if (length(unique(dat_sub$Group)) < 2) next
+
+  # Kruskal-Wallis test
+  print(kruskal.test(Expression ~ Group, data = dat_sub))
+
+  # Dunn post-hoc test with Benjamini-Hochberg correction
+  dunn_out <- dunnTest(Expression ~ Group, data = dat_sub, method = "bh")
+
+  # Extract test table and add Treatment field
+  dunn_tbl            <- dunn_out$res3
+  dunn_tbl$Treatment  <- treatment_i
+
+  # Store in list, named by treatment
+  dunn_results[[treatment_i]] <- dunn_tbl
+}
+
+# Combine all Dunn test results
+dunn_all <- do.call(rbind, dunn_results)
+
+# Filter significant Dunn test results and compute bracket positions
+dat_sig <- dunn_all %>%
+  filter(P.adj < 0.05) %>%
+  mutate(
+    xmin        = gsub(" - .*", "", Comparison),
+    xmax        = gsub(".* - ", "", Comparison),
+    annotations = signif(P.adj, digits = 2)
+  ) %>%
+  left_join(
+    dat_long %>% group_by(Treatment) %>% summarise(y_position = max(Expression) * 1.1),
+    by = "Treatment"
+  )
+
+# Get numeric position of each Group level
+group_levels <- levels(dat_long$Group)
+dat_sig <- dat_sig %>%
+  mutate(
+    xstart = as.numeric(factor(xmin, levels = group_levels)),
+    xend   = as.numeric(factor(xmax, levels = group_levels)),
+    xmid   = (xstart + xend) / 2
+  ) %>%
+  group_by(Treatment) %>%
+  mutate(y_position = y_position + row_number() * 0.1 * max(y_position))
+
+# Build bracket data frame for significance annotation
+bracket_height <- 0.01  # Bracket height relative to y-axis scale
+bracket_df <- dat_sig %>%
+  mutate(
+    xstart = as.numeric(factor(xmin, levels = levels(dat_long$Group))),
+    xend   = as.numeric(factor(xmax, levels = levels(dat_long$Group))),
+    xmid   = (xstart + xend) / 2,
+    y_top  = y_position + bracket_height * y_position,
+    y_text = y_top + 0.02 * y_position
+  )
+```
+
+## Plot Figure 4B
+```{r Figure_4B_plot}
+ggplot(dat_long, aes(x = Group, y = Expression, fill = Group)) +
+  geom_violin(width = 0.5, alpha = 1, aes(color = Group)) +
+  geom_point(position = position_jitter(width = 0.2), size = 2, aes(color = Group)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 1, color = "darkgrey") +
+  scale_fill_manual(values  = my_color_group) +
+  scale_color_manual(values = my_color_group) +
+  facet_wrap(~ Treatment, scales = "free_y", ncol = 4) +
+  theme_classic(base_size = 10) +
+  labs(x = "", y = "Expression Level") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  # Left bracket arm
+  geom_segment(data = bracket_df,
+               aes(x = xstart, xend = xstart, y = y_position, yend = y_top),
+               inherit.aes = FALSE) +
+  # Right bracket arm
+  geom_segment(data = bracket_df,
+               aes(x = xend, xend = xend, y = y_position, yend = y_top),
+               inherit.aes = FALSE) +
+  # Horizontal bracket top
+  geom_segment(data = bracket_df,
+               aes(x = xstart, xend = xend, y = y_top, yend = y_top),
+               inherit.aes = FALSE) +
+  # Significance label
+  geom_text(data = bracket_df,
+            aes(x = xmid, y = y_text, label = annotations, color = "black"),
+            size        = 3.5,
+            inherit.aes = FALSE)
+
+ggsave(filename = "Figure 4B.pdf", width = 10, height = 5, bg = "white")
+```

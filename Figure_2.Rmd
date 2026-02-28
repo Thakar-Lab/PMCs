@@ -1,0 +1,730 @@
+---
+title: "Figure 2: PMC Plot"
+output: html_document
+date: "2024-08-29"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Figure 2A: GOplot — PMC vs Non-PMC with Upregulated Genes Using GSEA
+```{r Figure_2A_PMC_GOplot}
+library(openxlsx)
+library(enrichplot)
+library(clusterProfiler)
+library(GOplot)
+library(ggsci)
+
+housekeeping_genes <- data.frame(openxlsx::read.xlsx("Housekeep gene set.xlsx", sheet = 1))
+top_markers   <- read.csv("Reactome pathways.csv", header = TRUE)
+cluster_marker <- read.csv("Figure 2A PMC vs nonPMC DEGs.csv", header = TRUE)
+cluster_marker <- cluster_marker[!grepl("^MT-|^MT|\\.|^(RPS|RPL)", cluster_marker$X), ]
+cluster_marker <- cluster_marker[!cluster_marker$X %in% housekeeping_genes$Symbol, ]
+cluster_marker <- cluster_marker %>%
+  filter(avg_log2FC > log2(1) & p_val_adj < 0.05) %>%
+  filter(pct.1 > 0.1 | pct.2 > 0.1)
+
+# Load Reactome gene sets
+geneset <- read.gmt("Reactome_human.gmt")
+geneset <- geneset[geneset$term %in% top_markers$gene, ]
+
+# Extract FDR and FC values
+group1 <- cluster_marker
+group1$external_gene_name <- group1$X
+group1$logFC <- group1$avg_log2FC
+group1$FDR   <- group1$p_val_adj
+group1 <- group1[, c("external_gene_name", "logFC", "FDR")]
+rownames(group1) <- group1$external_gene_name
+
+# Add up/down regulation column: log2FC > log2(1), adj. p < 0.05
+group1$g1 <- "normal"
+group1$g1[group1$logFC >  log2(1) & group1$FDR < 0.05] <- "up"
+group1$g1[group1$logFC < -log2(1) & group1$FDR < 0.05] <- "down"
+table(group1$g1)
+
+# Get differentially expressed genes
+DEGs <- group1[group1$g1 != "normal", ]
+DEGs <- DEGs[order(DEGs$logFC, decreasing = TRUE), ]
+genelist <- DEGs$logFC
+names(genelist) <- DEGs$external_gene_name
+
+# Run GSEA
+enrichplot_1 <- GSEA(genelist, TERM2GENE = geneset, pvalueCutoff = 1,
+                     pAdjustMethod = "fdr", minGSSize = 10, maxGSSize = 10000)
+p1 <- dotplot(enrichplot_1, showCategory = 30, label_format = 100, color = "pvalue")
+p1
+
+# Build GOplot chord data
+enrichplot <- data.frame(enrichplot_1)
+go <- data.frame(
+  Category = enrichplot$ID,
+  ID       = enrichplot$ID,
+  Term     = enrichplot$Description,
+  Genes    = gsub("/", ", ", enrichplot$core_enrichment),
+  adj_pval = enrichplot$p.adjust
+)
+genelist <- data.frame(ID = group1$external_gene_name, logFC = group1$logFC)
+row.names(genelist) <- genelist[, 1]
+circ <- circle_dat(go, genelist)
+
+termNum <- 10
+termNum  <- ifelse(nrow(go) < termNum, nrow(go), termNum)
+geneNum  <- nrow(genelist)
+chord    <- chord_dat(circ, genelist[1:geneNum, ], go$Term[1:termNum])
+
+# Helper: insert newline after the second space in long pathway names
+add_newline_after_second_space <- function(name) {
+  spaces <- gregexpr(" ", name)[[1]]
+  # If more than two spaces, insert a newline after the second space
+  if (length(spaces) > 2) {
+    second_space_pos <- spaces[2]
+    name <- paste0(
+      substr(name, 1, second_space_pos), "\n",
+      substr(name, second_space_pos + 1, nchar(name))
+    )
+  }
+  return(name)
+}
+
+colnames(chord) <- sapply(colnames(chord), add_newline_after_second_space)
+
+source("saved code/GOChord_update")
+my_colors <- colorRampPalette(brewer.pal(12, "Paired"))(9)
+
+p2_A <- update_GOChord(chord,
+  space       = 0.125,
+  gene.order  = "logFC",
+  gene.space  = 0.25,
+  gene.size   = 5,
+  ribbon.col  = c(my_colors, "antiquewhite1"),
+  border.size = 0,
+  process.label = 5
+)
+p2_A
+```
+
+
+# Figure 2E: RT-qPCR Relative Fold Expression (PF4 and PPBP)
+```{r Figure_2E_qPCR}
+library(readxl)
+library(ggpubr)
+
+dat <- data.frame(read_xlsx("Figure 2E qPCR of PF4 and PPBP.xlsx"))
+dat_long <- pivot_longer(dat, cols = c(Mono, Mono_PLT),
+                         names_to = "Group", values_to = "Expression")
+dat_long$Group <- ifelse(dat_long$Group == "Mono",     "in vitro nonPMC",
+                  ifelse(dat_long$Group == "Mono_PLT", "in vitro PMC", NA))
+
+p2_E <- ggplot(dat_long, aes(x = Group, y = Expression, fill = Group)) +
+  geom_violin(width = 0.5, alpha = 1, color = NA) +
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 1) +
+  geom_point(position = position_jitter(width = 0.01), size = 2, aes(color = Group)) +
+  scale_fill_manual(values  = my_color_PMC) +
+  scale_color_manual(values = my_color_PMC) +
+  facet_wrap(~ genes, scales = "free_y", ncol = 1) +
+  stat_compare_means(
+    method      = "t.test",
+    label       = "p.format",
+    comparisons = list(c("in vitro nonPMC", "in vitro PMC")),
+    label.y.npc = "top",
+    size        = 5
+  ) +
+  theme_classic(base_size = 16) +
+  labs(x = "", y = "Relative Fold Expression") +
+  theme(axis.text.x = element_text(angle = -45, vjust = 0, hjust = 0.2)) +
+  scale_y_continuous(expand = c(0, 35))
+p2_E
+```
+
+
+# Bulk RNA-seq: Load Raw Count Data
+```{r Bulk_RNAseq_load_counts}
+library(DESeq2)
+library(openxlsx)
+
+# Load gene count matrix
+countdata <- read.table("Figure 2 Bulk_RNAseq_deSeq2_counts.txt", header = TRUE, row.names = 1)
+
+# Load sample group information
+coldata <- read.xlsx("Figure 2 Bulk_RNAseq_Groups.xlsx", rowNames = TRUE)
+coldata$group <- c(rep("Mono", 7), rep("Mono_PLT_low", 7), rep("Mono_PLT", 7),
+                   rep("Mono", 8), rep("Mono_PLT_low", 8), rep("Mono_PLT", 8))
+coldata$day <- "D2"
+coldata$day[22:45] <- "D7"
+countdata <- countdata[, rownames(coldata)]
+coldata$condition <- as.factor(coldata$condition)
+
+# Build DESeq2 dataset
+dds <- DESeqDataSetFromMatrix(countData = countdata,
+                              colData   = coldata,
+                              design    = ~ condition)
+# Filter genes with row sum less than 1
+dds <- dds[rowSums(counts(dds)) > 1, ]
+barplot(colSums(assay(dds)), las = 3, cex.names = 0.5, col = rep(rainbow(4), each = 3))
+
+# rlog normalization
+rld <- rlog(dds, blind = FALSE)
+```
+
+
+# Differential Expression Analysis (DESeq2)
+```{r DESeq2_analysis}
+# Day 2: condition 3 vs 1 (in vitro PMC vs non-PMC, Day 2)
+dds$condition <- relevel(dds$condition, ref = "1")
+dds <- DESeq(dds)
+res0.05 <- list()
+res <- results(dds, name = "condition_3_vs_1")
+res0.05[["condition_3_vs_1"]] <- as.data.frame(na.omit(res))
+
+# Day 7: condition 6 vs 4 (in vitro PMC vs non-PMC, Day 7)
+dds$condition <- relevel(dds$condition, ref = "4")
+dds <- DESeq(dds)
+res <- results(dds, name = "condition_6_vs_4")
+res0.05[["condition_6_vs_4"]] <- as.data.frame(na.omit(res))
+```
+
+
+# Merge DESeq2 Results Across All Groups
+```{r merge_DESeq2_results}
+data <- lapply(names(res0.05), function(cluster_name) {
+  df <- as.data.frame(res0.05[[cluster_name]])
+  df$ID <- rownames(df)
+  df <- df[!grepl("^ENSG|^DNAH", df$ID), ]
+  df <- df[!grepl("^MT-|\\.|^MT", df$ID), ]
+  df <- df[!grepl("^(RPS|RPL)", df$ID), ]
+  df <- df[!df$ID %in% housekeeping_genes$Symbol, ]
+  df <- df[, c(2, 6, 7), drop = FALSE]
+  df$cluster <- cluster_name
+  return(df)
+})
+data <- do.call(rbind, data)
+```
+
+
+# Figure 2F: GSEA Bubble Plot (Bulk RNA-seq, Day 2)
+```{r Figure_2F_GSEA}
+# Filter significantly upregulated genes
+log2FC_cutoff <- log2(1)
+padj_cutoff   <- 0.05
+
+condition_3_vs_1 <- data %>% filter(cluster == "condition_3_vs_1") %>%
+  filter(log2FoldChange > log2FC_cutoff & padj < padj_cutoff) %>%
+  arrange(padj, desc(abs(log2FoldChange))) %>% dplyr::select(ID)
+
+condition_6_vs_4 <- data %>% filter(cluster == "condition_6_vs_4") %>%
+  filter(log2FoldChange > log2FC_cutoff & padj < padj_cutoff) %>%
+  arrange(padj, desc(abs(log2FoldChange))) %>% dplyr::select(ID)
+
+# Pathway enrichment analysis
+geneset <- read.gmt("Reactome_human.gmt")
+geneset <- geneset[geneset$term %in% top_markers$geneset, ]
+
+# Load and prepare gene-level data for Day 2
+group1 <- data %>% filter(cluster == "condition_3_vs_1")
+group1$external_gene_name <- group1$ID
+group1$logFC <- group1$log2FoldChange
+group1$FDR   <- group1$padj
+group1 <- group1[, c("external_gene_name", "logFC", "FDR")]
+group1 <- group1[group1$external_gene_name != "", ]
+rownames(group1) <- group1$external_gene_name
+
+# Add up/down regulation column
+group1$g1 <- "normal"
+group1$g1[group1$logFC >  log2(1) & group1$FDR < 0.05] <- "up"
+group1$g1[group1$logFC < -log2(1) & group1$FDR < 0.05] <- "down"
+table(group1$g1)
+
+# Get differentially expressed genes and sorted gene list
+DEGs <- group1[group1$g1 != "normal", ]
+DEGs <- DEGs[order(DEGs$logFC, decreasing = TRUE), ]
+genelist <- DEGs$logFC
+names(genelist) <- DEGs$external_gene_name
+
+# Run GSEA and output all results
+egmt <- GSEA(genelist, TERM2GENE = geneset, pvalueCutoff = 0.1,
+             pAdjustMethod = "fdr", minGSSize = 1, maxGSSize = 500)
+dotplot(egmt, showCategory = 10, label_format = 100, color = "pvalue")
+
+# Prepare enrichment data frame
+dt <- data.frame(egmt)
+dt$Description <- factor(dt$ID, levels = rev(dt$ID))
+dt <- dt %>% filter(NES > 0)
+
+# Basic enrichment bar plot
+Fig2_B_sup <- ggplot() +
+  geom_bar(data = dt,
+           aes(x = NES, y = reorder(Description, NES)),
+           width = 0.5,
+           fill  = my_color_PMC[4],
+           stat  = "identity") +
+  theme_classic() +
+  scale_x_continuous(expand = c(0, 0)) +
+  theme(axis.text.y = element_blank()) +
+  geom_text(data = dt,
+            aes(x = 0.01, y = Description, label = Description),
+            size = 4.5, hjust = 0) +
+  geom_text(data = dt,
+            aes(x = 0.01, y = Description, label = core_enrichment),
+            color     = "darkgrey",
+            size      = 4,
+            fontface  = "italic",
+            hjust     = 0,
+            vjust     = 2.3) +
+  labs(x = "Normalized Enrichment Score (NES)", y = "Pathways")
+Fig2_B_sup
+
+# Sort pathway names as factor for Y-axis
+dt <- dt[order(dt$NES, decreasing = TRUE), ]
+dt$ID   <- factor(dt$ID, levels = dt$ID)
+dt$xlab <- 1:nrow(dt)
+summary(dt$NES)
+
+# Pathway names to label in the plot
+label      <- dt$ID
+data_label <- dt[dt$ID %in% label, ]
+data_label$col <- "black"
+dt$label_combined <- paste0(dt$ID, ": ", dt$core_enrichment)
+
+p2_F <- ggplot(data = dt, aes(x = xlab, y = NES)) +
+  geom_point(aes(size = setSize, fill = -log10(p.adjust)),
+             shape = 21, stroke = 0.7, colour = "black") +
+  scale_fill_gradient(low = my_color_PMC[4], high = "red") +
+  scale_size_continuous(range = c(1, 10)) +
+  xlab("") +
+  ylab("Normalized Enrichment Score (NES)") +
+  theme_classic(base_size = 16) +
+  scale_x_continuous(breaks = seq(0, 50, by = 5), labels = seq(0, 50, by = 5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.05))) +
+  theme(
+    legend.text       = element_text(size = 16),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.text         = element_text(face = "bold")
+  ) +
+  guides(
+    size  = guide_legend(title = "Size"),
+    alpha = guide_legend(title = expression("-Log"[10] * " (p-value)"))
+  ) +
+  geom_text_repel(
+    data             = dt,
+    aes(x = xlab, y = NES, label = ID),
+    size             = 6,
+    color            = data_label$col,
+    force            = 10,
+    point.padding    = 0.5,
+    min.segment.length = 0,
+    hjust            = 1,
+    segment.color    = "grey20",
+    segment.size     = 0.1,
+    segment.alpha    = 0.8,
+    nudge_y          = -0.1
+  )
+p2_F
+```
+
+
+# Figure 2B: Venn Diagram (scRNA-seq vs Bulk RNA-seq) and Figure 2C: Dot Plot
+```{r Figure_2B_2C}
+# Filter upregulated bulk RNA-seq DEGs
+log2FC_cutoff <- log2(1.5)
+padj_cutoff   <- 0.05
+
+condition_3_vs_1 <- data %>% filter(cluster == "condition_3_vs_1") %>%
+  filter(log2FoldChange > log2FC_cutoff & padj < padj_cutoff) %>% rownames()
+
+condition_6_vs_4 <- data %>% filter(cluster == "condition_6_vs_4") %>%
+  filter(log2FoldChange > log2FC_cutoff & padj < padj_cutoff) %>% rownames()
+
+cluster_marker <- read.csv("Figure 2A PMC vs nonPMC DE genes.csv", header = TRUE)
+cluster_marker <- cluster_marker[!grepl("^MT-|^MT|\\.|^(RPS|RPL)", cluster_marker$X), ]
+cluster_marker <- cluster_marker[!cluster_marker$X %in% housekeeping_genes$Symbol, ]
+cluster_marker <- cluster_marker %>% filter(avg_log2FC > log2(1.5) & p_val_adj < 0.05)
+
+# Shared genes
+gene_df <- data.frame(Gene = intersect(condition_3_vs_1, cluster_marker$X))
+
+# Venn diagram
+library(Vennerable)
+mylist    <- list(PMC = cluster_marker$X, "in vitro PMC" = condition_3_vs_1)
+Vennplot  <- Vennerable::Venn(mylist)
+w  <- compute.Venn(Vennplot)
+gp <- VennThemes(w)
+gp[["Face"]][["11"]]$fill    <- "white"
+gp[["Face"]][["01"]]$fill    <- "white"
+gp[["Face"]][["10"]]$fill    <- "white"
+gp[["Set"]][["Set1"]]$col     <- my_color_PMC["PMC"]
+gp[["SetText"]][["Set1"]]$col <- my_color_PMC["PMC"]
+gp[["Set"]][["Set2"]]$col     <- my_color_PMC["in vitro PMC"]
+gp[["SetText"]][["Set2"]]$col <- my_color_PMC["in vitro PMC"]
+plot(w, gp = gp)
+
+# Shared genes
+intersect(mylist$PMC, mylist$`in vitro PMC`)
+
+# Dot plot of shared genes across clusters
+Idents(obj) <- "cluster_num"
+my_levels   <- c("CD14", "CD14-active", "CD16", "Intermediate",
+                  "Intermediate-metabolic", "Intermediate-interferon", "PMC")
+Idents(obj) <- factor(x = Idents(obj), levels = rev(my_levels))
+
+features <- data %>%
+  filter(cluster == "condition_3_vs_1") %>%
+  filter(ID %in% gene_df$Gene) %>%
+  arrange(desc(log2FoldChange), padj) %>%
+  dplyr::select(ID)
+
+DefaultAssay(obj) <- "SCT"
+p2_C <- DotPlot(obj, features = features$ID, dot.scale = 5) +
+  scale_size_area(max_size = 10) +
+  RotatedAxis() + xlab("") + ylab("") +
+  coord_flip() +
+  scale_color_gradientn(colors = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10)) +
+  scale_y_discrete(guide = guide_axis(angle = -45)) +
+  theme(
+    axis.text         = element_text(size = 16),
+    legend.text       = element_text(size = 16),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm")
+  )
+p2_C
+```
+
+
+# Figure 2D: Volcano Plot (Bulk RNA-seq, Day 2)
+```{r Figure_2D_volcano}
+log2FC_cutoff <- log2(1)
+padj_cutoff   <- 0.05
+
+need_DEG <- data %>% filter(cluster == "condition_3_vs_1")
+need_DEG$significance <- as.factor(
+  ifelse(
+    need_DEG$padj < padj_cutoff & abs(need_DEG$log2FoldChange) > log2FC_cutoff,
+    ifelse(need_DEG$log2FoldChange > log2FC_cutoff, "UP", "DOWN"),
+    "NOT"
+  )
+)
+
+p2_D <- ggplot(data = need_DEG,
+               aes(x = log2FoldChange, y = -log10(padj), color = significance)) +
+  geom_point(alpha = 0.5, size = 1) +
+  theme_classic(base_size = 16) +
+  labs(color = "",
+       x = expression("log"[2] * " (Fold Change)"),
+       y = expression("-log"[10] * " (p-value)")) +
+  scale_colour_manual(values = c("#00AFBB", "grey", "#bb0c00")) +
+  geom_vline(xintercept = c(-log2FC_cutoff, log2FC_cutoff), lty = 4, col = "grey", lwd = 0.8) +
+  geom_hline(yintercept = -log10(padj_cutoff), lty = 4, col = "grey", lwd = 0.8) +
+  theme(
+    plot.margin       = unit(c(2, 2, 2, 2), "lines"),
+    legend.title      = element_blank(),
+    legend.position   = "right",
+    axis.text         = element_text(size = 16),
+    legend.text       = element_text(size = 16),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm")
+  ) + xlim(-10, 10)
+
+# Label top 30 DEGs plus specific genes of interest
+need_DEG <- need_DEG %>%
+  mutate(delabel = ifelse(
+    significance == "NOT", NA,
+    ifelse(
+      ID %in% (ID[significance != "NOT"] %>%
+                 .[order(padj[significance != "NOT"],
+                         -abs(log2FoldChange[significance != "NOT"]))] %>%
+                 head(30)),
+      ID, NA
+    )
+  ))
+
+need_DEG[need_DEG$ID == "IL10",  ]$delabel <- "IL10"
+need_DEG[need_DEG$ID == "TGFBI", ]$delabel <- "TGFBI"
+need_DEG[need_DEG$ID == "CXCL1", ]$delabel <- "CXCL1"
+need_DEG[need_DEG$ID == "CCL2",  ]$delabel <- "CCL2"
+need_DEG[need_DEG$ID == "CCL20", ]$delabel <- "CCL20"
+need_DEG[need_DEG$ID == "CXCL5", ]$delabel <- "CXCL5"
+
+p2_D <- p2_D + geom_label_repel(
+  data = need_DEG,
+  aes(log2FoldChange, -log10(padj), label = delabel),
+  max.overlaps = Inf,
+  size = 4
+)
+p2_D
+```
+
+
+# Combine and Save Figure 2C–F
+```{r Figure_2C-F_patchwork}
+library(patchwork)
+combined_plot <- p2_D + p2_E + plot_layout(widths = c(2, 1), guides = "collect")
+combined_plot <- combined_plot / p2_F + plot_layout(heights = c(1, 1))
+combined_plot <- p2_C + combined_plot + plot_layout(widths = c(1, 1))
+ggsave(filename = "Figure 2 C-F.pdf", width = 20, height = 13, bg = "white")
+```
+
+
+# Supplementary Figure 2A: GSEA Bar Plot (Day 7 Pathways)
+```{r Sup_Figure_2A_GSEA_barplot}
+library(ggpubr)
+
+# Volcano plot of gene sets (scPS) for PMC cluster
+library(ggprism)
+cluster_marker <- read.csv("Sup Fig 1B Cluster-specific gene sets.csv")
+cluster_marker <- cluster_marker %>%
+  filter(cluster == "PMC" & p_val_adj < 0.05) %>%
+  mutate(DEG = case_when(
+    avg_log2FC >  log2(1.5) & p_val_adj < 0.05 ~ "up",
+    avg_log2FC < -log2(1.5) & p_val_adj < 0.05 ~ "down",
+    TRUE ~ "no"
+  ))
+cluster_marker$label <- ifelse(
+  cluster_marker$p_val_adj < log2(3) & abs(cluster_marker$avg_log2FC) > log2(3),
+  cluster_marker$gene, ""
+)
+
+ggplot(cluster_marker, aes(x = avg_log2FC, y = -log10(p_val_adj), colour = DEG)) +
+  geom_point(alpha = 0.85, size = 1.5) +
+  scale_color_manual(values = c("steelblue", "gray", "brown")) +
+  xlim(c(-5, 5)) +
+  geom_vline(xintercept = c(-0.58, 0.58), lty = 4, col = "black", lwd = 0.8) +
+  geom_hline(yintercept = -log10(0.05), lty = 4, col = "black", lwd = 0.8) +
+  labs(x = "logFC", y = "-log10(FDR)") +
+  ggtitle("PMC") +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "right",
+        legend.title = element_blank()) +
+  geom_label_repel(data = cluster_marker, aes(label = label),
+                   size = 3, box.padding = unit(0.5, "lines"),
+                   point.padding = unit(0.8, "lines"),
+                   segment.color = "black", show.legend = FALSE,
+                   max.overlaps = 10000) +
+  theme_prism(border = TRUE)
+
+# Bar plot: top PMC pathways by category
+merged_data <- merge(
+  x    = cluster_marker,
+  y    = top_markers,
+  by.x = "gene",
+  by.y = "geneset",
+  all  = FALSE
+)
+merged_data <- merged_data %>%
+  filter(category %in% c("Immune System", "Hemostasis", "Metabolic")) %>%
+  filter(gene %in% top_markers$geneset) %>%
+  arrange(desc(avg_log2FC), p_val_adj) %>%
+  slice_head(n = 30) %>%
+  ungroup()
+
+Fig2_A_sup <- ggbarplot(
+  merged_data, x = "gene", y = "avg_log2FC",
+  fill        = "category",
+  color       = "white",
+  orientation = "horiz",
+  palette     = "nejm",
+  legend      = "right",
+  sort.val    = "asc",
+  sort.by.groups = TRUE
+) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(expand = c(0, 0)) +
+  xlab("") +
+  ylab(expression("Log"[2] * " (FC)")) +
+  ylim(-5, 5.3)
+Fig2_A_sup
+```
+
+
+# Supplementary Figure 2B–C: Macrophage Gene Set Overlap and Donut Chart
+```{r Sup_Figure_2B_2C_macrophage}
+library(VennDiagram)
+library(UpSetR)
+
+M_GS <- read_excel("Macrophage gene set.xlsx")
+M_GS <- split(M_GS$Marker, M_GS$Macrophages)
+M_GS <- lapply(M_GS, unique)
+
+mylist <- list(
+  "in vitro PMC"    = intersect(condition_3_vs_1$ID, unlist(M_GS)),
+  "in vitro PMC Mφ" = intersect(condition_6_vs_4$ID, unlist(M_GS)),
+  M1 = unique(M_GS$M1),
+  M2 = unique(M_GS$M2)
+)
+
+# UpSet plot
+Venn_data <- fromList(mylist)
+upset(Venn_data,
+  sets        = names(Venn_data),
+  keep.order  = TRUE,
+  order.by    = "freq",
+  point.size  = 3,
+  line.size   = 1,
+  number.angles = 0,
+  text.scale  = 2,
+  sets.x.label = "Size"
+)
+
+# Define comparison sets for donut chart
+sets <- list(
+  "in vitro PMC/M1"    = list(A = mylist[["in vitro PMC"]],    B = mylist[["M1"]]),
+  "in vitro PMC/M2"    = list(A = mylist[["in vitro PMC"]],    B = mylist[["M2"]]),
+  "in vitro PMC Mφ/M1" = list(A = mylist[["in vitro PMC Mφ"]], B = mylist[["M1"]]),
+  "in vitro PMC Mφ/M2" = list(A = mylist[["in vitro PMC Mφ"]], B = mylist[["M2"]])
+)
+
+# Compute overlap ratios and organize into a data frame
+df <- do.call(rbind, lapply(names(sets), function(name) {
+  A       <- sets[[name]]$A
+  B       <- sets[[name]]$B
+  overlap <- length(intersect(A, B))
+  total   <- length(A)
+  ratio   <- overlap / total
+  data.frame(Comparison = name, Overlap = overlap, Total = total, Ratio = ratio)
+}))
+
+# Color definitions
+my_colors <- c(
+  "in vitro PMC/M1"    = "#81D8D0",
+  "in vitro PMC/M2"    = "#1F77B4",
+  "in vitro PMC Mφ/M1" = "#ECA9B0",
+  "in vitro PMC Mφ/M2" = "#D62728"
+)
+
+# Compute ymin and ymax for donut chart
+df$ymax  <- cumsum(df$Ratio)
+df$ymin  <- c(0, head(df$ymax, n = -1))
+df$label <- paste0(df$Comparison, "\n(", round(df$Ratio * 100, 1), "%)")
+
+Fig2_C_sup <- ggplot(df, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = Comparison)) +
+  geom_rect(color = "white", size = 1) +
+  coord_polar(theta = "y") +
+  xlim(c(2, 4)) +
+  theme_void() +
+  scale_fill_manual(values = my_colors) +
+  geom_text(aes(x = 3.5, y = (ymin + ymax) / 2, label = label), size = 5) +
+  theme(legend.position = "none")
+Fig2_C_sup
+```
+
+
+# Combine and Save Supplementary Figure 2A–C
+```{r Sup_Figure_2A-C_patchwork}
+library(patchwork)
+combined_plot <- (Fig2_B_sup / Fig2_C_sup) + plot_layout(heights = c(1, 2))
+Fig2_A_sup + combined_plot
+ggsave(filename = "Figure 2 Sup A-C.pdf", width = 10, height = 10, bg = "white")
+```
+
+
+# Supplementary: GSEA of PMC vs Non-PMC (scRNA-seq)
+```{r Sup_PMC_GSEA_scRNAseq}
+cluster_marker <- read.csv("Figure 2A PMC vs nonPMC DE genes.csv", header = TRUE)
+cluster_marker <- cluster_marker[!grepl("^MT-|^MT|\\.|^(RPS|RPL)", cluster_marker$X), ]
+cluster_marker <- cluster_marker %>%
+  filter(abs(avg_log2FC) > log2(1) & p_val_adj < 0.05) %>%
+  filter(pct.1 > 0.1 | pct.2 > 0.1) %>%
+  arrange(desc(avg_log2FC), p_val_adj)
+
+# Extract FDR and FC values
+group1 <- cluster_marker
+group1$external_gene_name <- group1$X
+group1$logFC <- group1$avg_log2FC
+group1$FDR   <- group1$p_val_adj
+group1 <- group1[, c("external_gene_name", "logFC", "FDR")]
+group1 <- group1[group1$external_gene_name != "", ]
+rownames(group1) <- group1$external_gene_name
+
+# Add up/down regulation column
+group1$g1 <- "normal"
+group1$g1[group1$logFC >  log2(1) & group1$FDR < 0.05] <- "up"
+group1$g1[group1$logFC < -log2(1) & group1$FDR < 0.05] <- "down"
+table(group1$g1)
+
+# Get differentially expressed genes and sorted gene list
+DEGs <- group1[group1$g1 != "normal", ]
+DEGs <- DEGs[order(DEGs$logFC, decreasing = TRUE), ]
+genelist <- DEGs$logFC
+names(genelist) <- DEGs$external_gene_name
+
+# Load Reactome gene sets
+geneset <- read.gmt("Reactome_human.gmt")
+geneset <- geneset[geneset$term %in% top_markers$geneset, ]
+
+# Run GSEA and output all results
+egmt <- GSEA(genelist, TERM2GENE = geneset, pvalueCutoff = 0.1,
+             pAdjustMethod = "fdr", minGSSize = 1, maxGSSize = 500000)
+cnetplot(egmt, showCategory = 10, foldChange = genelist,
+         circular = TRUE, colorEdge = TRUE, size_item = 5) +
+  scale_color_gradientn(colours = c("white", "red"))
+
+dotplot(egmt, showCategory = 10, label_format = 100, color = "pvalue")
+
+# Enrichment bar plot
+dt <- data.frame(egmt)
+dt$Description <- factor(dt$ID, levels = rev(dt$ID))
+dt <- dt %>% filter(NES > 0)
+
+ggplot() +
+  geom_bar(data = dt,
+           aes(x = NES, y = reorder(Description, NES)),
+           width = 0.5, fill = my_color_PMC[4], stat = "identity") +
+  theme_classic() +
+  scale_x_continuous(expand = c(0, 0)) +
+  theme(axis.text.y = element_blank()) +
+  geom_text(data = dt,
+            aes(x = 0.01, y = Description, label = Description),
+            size = 4.5, hjust = 0) +
+  geom_text(data = dt,
+            aes(x = 0.01, y = Description, label = core_enrichment),
+            color = "grey", size = 4, fontface = "italic", hjust = 0, vjust = 2.3) +
+  labs(x = "Normalized Enrichment Score (NES)", y = "Pathways")
+
+# Sort pathway names as factor for Y-axis
+dt <- dt[order(dt$NES, decreasing = TRUE), ]
+dt$ID   <- factor(dt$ID, levels = dt$ID)
+dt$xlab <- 1:nrow(dt)
+summary(dt$NES)
+
+# Pathway names to label in the plot
+label      <- dt$ID
+data_label <- dt[dt$ID %in% label, ]
+data_label$col <- "black"
+dt$label_combined <- paste0(dt$ID, ": ", dt$core_enrichment)
+
+ggplot(data = dt, aes(x = xlab, y = NES)) +
+  geom_point(aes(size = setSize, alpha = -log10(p.adjust)),
+             shape = 21, stroke = 0.7, fill = my_color_PMC[3], colour = "black") +
+  scale_size_continuous(range = c(1, 10)) +
+  xlab("") +
+  ylab("Normalized Enrichment Score (NES)") +
+  theme_classic(base_size = 16) +
+  scale_x_continuous(breaks = seq(0, 50, by = 5), labels = seq(0, 50, by = 5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.05))) +
+  theme(
+    legend.text       = element_text(size = 16),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm"),
+    axis.text         = element_text(face = "bold")
+  ) +
+  guides(
+    size  = guide_legend(title = "Size"),
+    alpha = guide_legend(title = expression("-Log"[10] * " (p-value)"))
+  ) +
+  geom_text_repel(
+    data             = dt,
+    aes(x = xlab, y = NES, label = ID),
+    size             = 6,
+    color            = data_label$col,
+    force            = 10,
+    point.padding    = 0.5,
+    min.segment.length = 0,
+    hjust            = 1,
+    segment.color    = "grey20",
+    segment.size     = 0.1,
+    segment.alpha    = 0.8,
+    nudge_y          = -0.1
+  )
+```

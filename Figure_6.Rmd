@@ -1,0 +1,681 @@
+---
+title: "Figure 6: In Vitro PMC vs Non-PMC"
+output: html_document
+date: "2025-02-05"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Load Libraries
+```{r setup, message=FALSE, warning=FALSE}
+library(rstatix)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(purrr)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(patchwork)
+library(readxl)
+library(openxlsx)
+library(Cairo)
+library(FactoMineR)
+library(factoextra)
+library(psych)
+library(viridis)
+library(corrplot)
+library(ggsci)
+library(clusterProfiler)
+library(pheatmap)
+library(gridExtra)
+library(grid)
+```
+
+
+# Figure 6A–B: Cytokine and Pathway Dot Plots
+
+## Figure 6A: Cytokine Gene Expression (SCT)
+```{r Figure_6A_cytokine_dotplot}
+p1_1 <- DotPlot(obj, features = c("TNF", "IL1B", "IL6", "IL10", "TGFB1"),
+                assay = "SCT", dot.scale = 5) +
+  scale_size_area(max_size = 5) +
+  coord_flip() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 45, size = 20, vjust = 1, hjust = 1)) +
+  xlab("") + ylab("") +
+  guides(size = guide_legend("Percent Expression")) +
+  scale_color_gradientn(colors = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10)) +
+  scale_x_discrete(guide = guide_axis(angle = 0)) +
+  theme(
+    axis.text        = element_text(size = 20),       # Axis text style
+    legend.text      = element_text(size = 16),        # Legend text style
+    legend.title     = element_text(size = 16),
+    axis.line        = element_line(color = "black", size = 0.8),
+    axis.ticks       = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm")
+  )
+p1_1
+```
+
+## Figure 6B: IL-10 and TGF-β Pathway Scores (scPS)
+```{r Figure_6B_pathway_dotplot}
+features <- c(
+  "Interleukin-10 signaling",
+  rownames(obj[["scPS"]])[grep("IL10", rownames(obj[["scPS"]]))],
+  rownames(obj[["scPS"]])[grep("TGF",  rownames(obj[["scPS"]]))]
+)
+features <- features[features != "FCGR3A-mediated IL10 synthesis"]
+features <- features[features != "Downregulation of TGF-beta receptor signaling"]
+
+Idents(obj)       <- "cluster_num"
+DefaultAssay(obj) <- "scPS"
+Idents(obj)       <- "PMC"
+
+p1 <- DotPlot(obj, features = features, assay = "scPS", dot.scale = 5) +
+  scale_size_area(max_size = 5) +
+  coord_flip() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text.y = element_text(angle = 0,  vjust = 1, hjust = 1)) +
+  xlab("") + ylab("") +
+  guides(size = guide_legend("Percent Expression")) +
+  scale_color_gradientn(colors = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10)) +
+  theme(
+    axis.text         = element_text(size = 20),       # Axis text style
+    legend.text       = element_text(size = 16),        # Legend text style
+    legend.title      = element_text(size = 16),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm")
+  )
+p1
+```
+
+
+# Figure 6C: PCA Biplot of IL-10 and TGF-β Pathway Genes
+```{r Figure_6C_PCA}
+# Gather gene universe: IL-10 and TGF-β pathway members
+genes <- unique(c(
+  geneIds(predBind[["Interleukin-10 signaling"]]),
+  geneIds(predBind[["Signaling by TGF-beta Receptor Complex"]]),
+  geneIds(predBind[["Signaling by TGFB family members"]]),
+  geneIds(predBind[["TGF-beta receptor signaling activates SMADs"]]),
+  geneIds(predBind[["TGF-beta receptor signaling in EMT (epithelial to mesenchymal transition)"]])
+))
+genes <- sort(intersect(genes, rownames(rld)), decreasing = TRUE)
+
+data <- data.frame(t(assay(rld)[genes, c(1:7, 15:29, 38:45)]))
+data$group <- rep(
+  c("in vitro nonPMC", "in vitro PMC", "in vitro Mφ", "in vitro PMC Mφ"),
+  c(7, 7, 8, 8)
+)
+
+# PCA
+res.pca <- PCA(data[, -ncol(data)], graph = FALSE)
+print(res.pca)
+get_eigenvalue(res.pca)
+fviz_eig(res.pca)
+
+# PCA biplot with confidence ellipses, colored by group
+p2 <- fviz_pca_biplot(res.pca,
+  geom.ind      = "point",
+  pointshape    = 21,
+  pointsize     = 2.5,
+  labelsize     = 6,
+  fill.ind      = data$group,
+  col.ind       = data$group,
+  select.var    = list(name = c("IL10", "TGFB1", "STAT3", "STAT1",
+                                "TNF", "IL6", "IL1B", "CXCL10", "IL22")),
+  addEllipses   = TRUE,
+  ellipse.type  = "confidence",
+  legend.title  = list(fill = "Groups", color = "Groups"),
+  repel         = TRUE
+) +
+  scale_fill_manual(values  = my_color_PMC) +
+  scale_color_manual(values = my_color_PMC) +
+  theme_cowplot() +
+  ggtitle("") +
+  xlab("PC1 (37.1%)") + ylab("PC2 (14%)") +
+  theme(
+    axis.text         = element_text(size = 20),
+    axis.title        = element_text(size = 20),
+    legend.text       = element_text(size = 20),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm")
+  )
+p2
+# Save: width = 800, height = 600
+```
+
+
+# Figure 6D: TGF-β and IL-10 Gene Expression in Bulk RNA-seq
+
+## Helper: Build Significance Bracket Data Frame
+```{r bracket_helper}
+# Shared function: extracts Tukey significant comparisons and computes bracket positions
+make_bracket_df <- function(tukey_result, group_levels, y_data, bracket_height = 0.002, y_step = 0.01) {
+  dat_sig <- as.data.frame(tukey_result$Group) %>%
+    mutate(Comparison = rownames(.)) %>%
+    rename(p_adj = `p adj`) %>%
+    filter(p_adj < 0.05) %>%
+    separate(Comparison, into = c("xmin", "xmax"), sep = "-") %>%
+    mutate(
+      xmin        = trimws(xmin),
+      xmax        = trimws(xmax),
+      annotations = signif(p_adj, digits = 2)
+    ) %>%
+    left_join(
+      data.frame(Group = names(tapply(y_data, group_levels, max)),
+                 y     = tapply(y_data, group_levels, max, na.rm = TRUE)),
+      by = c("xmin" = "Group")
+    ) %>% rename(ymin = y) %>%
+    left_join(
+      data.frame(Group = names(tapply(y_data, group_levels, max)),
+                 y     = tapply(y_data, group_levels, max, na.rm = TRUE)),
+      by = c("xmax" = "Group")
+    ) %>%
+    rename(ymax = y) %>%
+    mutate(y.position = pmax(ymin, ymax))
+
+  dat_sig <- dat_sig %>%
+    mutate(
+      xstart = as.numeric(factor(xmin, levels = group_levels)),
+      xend   = as.numeric(factor(xmax, levels = group_levels)),
+      xmid   = (xstart + xend) / 2
+    ) %>%
+    mutate(y.position = y.position + row_number() * y_step * max(y.position))
+
+  dat_sig %>% mutate(
+    y_top  = y.position + bracket_height * y.position,
+    y_text = y_top + 0.005 * y.position    # Shift text label slightly upward
+  )
+}
+```
+
+## TGF-β Gene Set Violin Plot
+```{r Figure_6D_TGFb}
+# Extract TGFb gene rows for selected samples
+uni_matrix        <- data.frame(t(assay(rld)[rownames(rld)[grepl("TGFB", rownames(rld))],
+                                              c(1:7, 15:29, 38:45)]))
+uni_matrix$sum    <- rowSums(uni_matrix)
+uni_matrix$median <- apply(uni_matrix, 1, median)
+
+my_sample_col <- data.frame(
+  Group = rep(c("in vitro nonPMC", "in vitro PMC", "in vitro Mφ", "in vitro PMC Mφ"), c(7, 7, 8, 8))
+)
+rownames(my_sample_col) <- rownames(uni_matrix)
+uni_matrix <- cbind(my_sample_col, uni_matrix)
+uni_matrix$Group <- factor(uni_matrix$Group,
+                           levels = c("in vitro nonPMC", "in vitro PMC",
+                                      "in vitro Mφ", "in vitro PMC Mφ"))
+uni_matrix$Feature <- "TGFb gene set"
+
+# Normality check
+model <- lm(sum ~ Group, data = uni_matrix)
+ggqqplot(residuals(model))
+shapiro_test(residuals(model))
+
+# One-way ANOVA and Tukey HSD
+anova <- aov(sum ~ Group, data = uni_matrix)
+summary(anova)
+tukey <- TukeyHSD(anova)
+print(tukey)
+
+# Build bracket data frame for significance annotations
+group_levels <- levels(uni_matrix$Group)
+bracket_df <- make_bracket_df(tukey, group_levels, uni_matrix$sum,
+                              bracket_height = 0.002, y_step = 0.01)
+
+p3 <- ggplot(uni_matrix, aes(x = Group, y = sum, fill = Group)) +
+  geom_violin(width = 0.2, alpha = 1, aes(color = Group)) +
+  geom_quasirandom(size = 0.1, alpha = 1, color = "grey40") +
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 1,
+               color = "lightgrey", linewidth = 0.2) +
+  scale_fill_manual(values  = my_color_PMC) +
+  scale_color_manual(values = my_color_PMC) +
+  facet_wrap(~ Feature, scales = "free_y") +
+  theme_classic(base_size = 20) +
+  labs(x = "", y = "TGFb Gene Set") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text   = element_text(color = "black"),
+        axis.title  = element_text(color = "black")) +
+  # Left bracket arm
+  geom_segment(data = bracket_df,
+               aes(x = xstart, xend = xstart, y = y.position, yend = y_top),
+               inherit.aes = FALSE) +
+  # Right bracket arm
+  geom_segment(data = bracket_df,
+               aes(x = xend, xend = xend, y = y.position, yend = y_top),
+               inherit.aes = FALSE) +
+  # Horizontal bracket top
+  geom_segment(data = bracket_df,
+               aes(x = xstart, xend = xend, y = y_top, yend = y_top),
+               inherit.aes = FALSE) +
+  # Significance label
+  geom_text(data = bracket_df,
+            aes(x = xmid, y = y_text, label = annotations),
+            size = 5, inherit.aes = FALSE)
+p3
+```
+
+## IL-10 Expression Violin Plot
+```{r Figure_6D_IL10}
+# Extract IL10 expression for selected samples
+genes_sub <- c(rownames(rld)[grepl("TGFB", rownames(rld))],
+               rownames(rld)[grepl("IL10", rownames(rld))],
+               "TNF", "IL6", "IL1B", "IL12B", "IL12RB1", "ARG1")
+de_mat    <- assay(rld)[genes_sub, c(1:7, 15:29, 38:45)]
+
+my_sample_col <- data.frame(
+  Group = rep(c("in vitro nonPMC", "in vitro PMC", "in vitro Mφ", "in vitro PMC Mφ"), c(7, 7, 8, 8))
+)
+rownames(my_sample_col) <- colnames(de_mat)
+
+de_long <- as.data.frame(t(de_mat)) %>%
+  rownames_to_column(var = "Sample") %>%
+  pivot_longer(-Sample, names_to = "Feature", values_to = "Expression") %>%
+  left_join(rownames_to_column(my_sample_col, var = "Sample"), by = "Sample") %>%
+  filter(Feature == "IL10")
+
+de_long$Group <- factor(de_long$Group,
+                        levels = c("in vitro nonPMC", "in vitro PMC",
+                                   "in vitro Mφ", "in vitro PMC Mφ"))
+
+# Normality check
+model <- lm(Expression ~ Group, data = de_long)
+ggqqplot(residuals(model))
+shapiro_test(residuals(model))
+
+# One-way ANOVA and Tukey HSD
+anova <- aov(Expression ~ Group, data = de_long)
+summary(anova)
+tukey <- TukeyHSD(anova)
+print(tukey)
+
+# Build bracket data frame
+group_levels <- levels(de_long$Group)
+bracket_df <- make_bracket_df(tukey, group_levels, de_long$Expression,
+                              bracket_height = 0.002, y_step = 0.01)
+bracket_df$y_text <- bracket_df$y_top + 0.01 * bracket_df$y.position
+
+p4 <- ggplot(de_long, aes(x = Group, y = Expression, fill = Group)) +
+  geom_violin(width = 0.2, alpha = 1, aes(color = Group)) +
+  geom_point(position = position_jitter(width = 0.2), size = 0.5, aes(color = Group)) +
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 1,
+               color = "lightgrey", linewidth = 0.2) +
+  scale_fill_manual(values  = my_color_PMC) +
+  scale_color_manual(values = my_color_PMC) +
+  facet_wrap(~ Feature, scales = "free_y") +
+  theme_classic(base_size = 20) +
+  labs(x = "", y = "IL10") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text   = element_text(color = "black"),
+        axis.title  = element_text(color = "black")) +
+  geom_segment(data = bracket_df,
+               aes(x = xstart, xend = xstart, y = y.position, yend = y_top),
+               inherit.aes = FALSE) +
+  geom_segment(data = bracket_df,
+               aes(x = xend, xend = xend, y = y.position, yend = y_top),
+               inherit.aes = FALSE) +
+  geom_segment(data = bracket_df,
+               aes(x = xstart, xend = xend, y = y_top, yend = y_top),
+               inherit.aes = FALSE) +
+  geom_text(data = bracket_df,
+            aes(x = xmid, y = y_text, label = annotations),
+            size = 5, inherit.aes = FALSE)
+p4
+```
+
+
+# Figure 6E: ELISA of TGF-β and IL-10
+
+## Load and Reshape ELISA Data
+```{r Figure_6E_load_data}
+dat <- data.frame(openxlsx::read.xlsx(
+  "Figure 6E ELISAs of TGFb and IL-10.xlsx", sheet = 1
+))
+
+dat_long <- dat %>%
+  rename(sample = X1) %>%
+  pivot_longer(cols = c("Non.PMC", "PMC.1.100"),
+               names_to = "Group", values_to = "Expression") %>%
+  mutate(
+    CellType = case_when(
+      endsWith(Group, "Non.PMC")   ~ "in vitro nonPMC",
+      endsWith(Group, "PMC.1.100") ~ "in vitro PMC",
+      TRUE                          ~ NA_character_
+    ),
+    Day = case_when(
+      startsWith(as.character(Day), "7") ~ "6d",
+      startsWith(as.character(Day), "2") ~ "24 hrs",
+      TRUE                               ~ NA_character_
+    )
+  )
+dat_long$Gene <- factor(dat_long$Gene, levels = c("TGFb", "IL10"))
+
+# Normality check on ELISA data
+model <- lm(Expression ~ Group, data = de_long)
+ggqqplot(residuals(model))
+shapiro_test(residuals(model))
+```
+
+## Plot: Day 1 (24 hrs) — Monocyte vs PMC
+```{r Figure_6E_day1}
+p5 <- ggplot(dat_long[dat_long$Day == "24 hrs", ],
+             aes(x = CellType, y = Expression, fill = CellType)) +
+  geom_violin(width = 0.2, alpha = 1, aes(color = CellType)) +
+  geom_point(position = position_jitter(width = 0.2), size = 0.5,
+             aes(color = Group)) +
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 1,
+               color = "lightgrey", linewidth = 0.2) +
+  scale_fill_manual(values  = my_color_PMC) +
+  scale_color_manual(values = my_color_PMC) +
+  facet_wrap(Day ~ Gene, scales = "free_y") +
+  stat_compare_means(
+    method      = "t.test",
+    label       = "p.format",
+    comparisons = list(c("in vitro nonPMC", "in vitro PMC")),
+    label.y.npc = "top",
+    size        = 5
+  ) +
+  theme_classic(base_size = 20) +
+  labs(x = "", y = "pg/mL") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text   = element_text(color = "black"),
+        axis.title  = element_text(color = "black")) +
+  NoLegend() +
+  scale_y_continuous(expand = c(0, 1000))
+p5
+```
+
+## Plot: Day 6 (6d) — Mφ vs PMC Mφ
+```{r Figure_6E_day6}
+dat_long <- dat_long %>%
+  mutate(
+    CellType_2 = case_when(
+      endsWith(CellType, "nonPMC") ~ "in vitro Mφ",
+      endsWith(CellType, "PMC")    ~ "in vitro PMC Mφ",
+      TRUE                          ~ NA_character_
+    )
+  )
+
+p6 <- ggplot(dat_long[dat_long$Day == "6d", ],
+             aes(x = CellType_2, y = Expression, fill = CellType_2)) +
+  geom_violin(width = 0.2, alpha = 1, aes(color = Group)) +
+  geom_point(position = position_jitter(width = 0.2), size = 0.5,
+             aes(color = Group)) +
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 1,
+               color = "lightgrey", linewidth = 0.2) +
+  scale_fill_manual(values  = my_color_PMC) +
+  scale_color_manual(values = my_color_PMC) +
+  facet_wrap(Day ~ Gene, scales = "free_y") +
+  stat_compare_means(
+    method          = "t.test",
+    label           = "p.format",
+    p.adjust.method = "fdr",
+    comparisons     = list(c("in vitro Mφ", "in vitro PMC Mφ")),
+    label.y.npc     = "top",
+    size            = 5
+  ) +
+  theme_classic(base_size = 20) +
+  labs(x = "", y = "pg/mL") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text   = element_text(color = "black"),
+        axis.title  = element_text(color = "black")) +
+  NoLegend()
+p6
+
+# Compute and save t-test p-values for both time points
+pval_day1 <- compare_means(
+  formula = Expression ~ CellType,
+  data    = dat_long %>% filter(Day == "24 hrs"),
+  method  = "t.test",
+  group.by = "Gene",
+  paired  = FALSE
+) %>% mutate(Day = "24 hrs")
+
+pval_day6 <- compare_means(
+  formula       = Expression ~ CellType_2,
+  data          = dat_long %>% filter(Day == "6d"),
+  method        = "t.test",
+  comparisons   = list(c("in vitro Mφ", "in vitro PMC Mφ")),
+  group.by      = "Gene",
+  p.adjust.method = "BH"
+) %>% mutate(Day = "6d")
+
+pval_df <- bind_rows(pval_day1, pval_day6)
+write.csv(pval_df, "Figure 6E T-test with TGFb and IL-10.csv")
+```
+
+
+# Assemble and Save Figure 6 A–E
+```{r Figure_6_assemble}
+left_plot       <- p1_1 / p1 + plot_layout(heights = c(1, 1))
+combined_top    <- left_plot | p2
+combined_bottom <- p3 + p4 + p5 + p6 +
+  plot_layout(guides = "collect", widths = c(2, 2, 1.5, 4))
+
+combined_full <- combined_top / combined_bottom + plot_layout(heights = c(2, 1.2))
+
+CairoPDF("Figure 6 A-E.pdf", width = 30, height = 16)
+print(combined_full)
+dev.off()
+```
+
+
+# Supplementary Figure 6A: Volcano Plot (PMC Mφ vs Mφ)
+```{r Sup_Figure_6A_volcano}
+log2FC_cutoff <- log2(1.5)
+padj_cutoff   <- 0.05
+
+need_DEG <- data %>% filter(cluster == "condition_6_vs_4")
+need_DEG$significance <- as.factor(
+  ifelse(
+    need_DEG$padj < padj_cutoff & abs(need_DEG$log2FoldChange) > log2FC_cutoff,
+    ifelse(need_DEG$log2FoldChange > log2FC_cutoff, "UP", "DOWN"),
+    "NOT"
+  )
+)
+
+Fig6_supA <- ggplot(data = need_DEG,
+                    aes(x = log2FoldChange, y = -log10(padj), color = significance)) +
+  geom_point(alpha = 0.5, size = 1) +
+  theme_classic(base_size = 16) +
+  labs(color = "",
+       x     = expression("log"[2] * " (FC)"),
+       y     = expression("-log"[10] * " (p-value)")) +
+  scale_colour_manual(values = c("#00AFBB", "grey", "#bb0c00")) +
+  geom_vline(xintercept = c(-log2FC_cutoff, log2FC_cutoff),
+             lty = 4, col = "grey", lwd = 0.8) +
+  geom_hline(yintercept = -log10(padj_cutoff),
+             lty = 4, col = "grey", lwd = 0.8) +
+  theme(
+    plot.margin       = unit(c(2, 2, 2, 2), "lines"),
+    legend.title      = element_blank(),
+    legend.position   = "right",
+    axis.text         = element_text(size = 16),
+    legend.text       = element_text(size = 16),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm")
+  ) +
+  xlim(-10, 10) + NoLegend()
+
+# Label top 30 significant genes plus genes of interest
+need_DEG <- need_DEG %>%
+  mutate(delabel = ifelse(
+    significance == "NOT", NA,
+    ifelse(
+      ID %in% (ID[significance != "NOT"] %>%
+                 .[order(padj[significance != "NOT"],
+                         -abs(log2FoldChange[significance != "NOT"]))] %>%
+                 head(30)),
+      ID, NA
+    )
+  ))
+
+# Force-label key genes of interest
+for (g in c("IL10", "TGFBI", "CXCL1", "CCL18", "HIF1A", "IL24", "IL22RA2", "IL15RA")) {
+  need_DEG[need_DEG$ID == g, ]$delabel <- g
+}
+
+Fig6_supA <- Fig6_supA +
+  geom_label_repel(data = need_DEG,
+                   aes(log2FoldChange, -log10(padj), label = delabel),
+                   max.overlaps = Inf, size = 4)
+Fig6_supA
+```
+
+
+# Supplementary Figure 6B: GSEA Bar and Bubble Plots
+```{r Sup_Figure_6B_GSEA}
+# Pathway enrichment analysis
+geneset <- read.gmt("Reactome_human.gmt")
+geneset <- geneset[geneset$term %in% top_markers$geneset, ]
+
+# Load DEG data for condition 6 vs 4
+group1 <- data %>% filter(cluster == "condition_6_vs_4")
+
+# Extract and rename columns
+group1$external_gene_name <- group1$ID
+group1$logFC              <- group1$log2FoldChange
+group1$FDR                <- group1$padj
+group1 <- group1[, c("external_gene_name", "logFC", "FDR")]
+group1 <- group1[group1$external_gene_name != "", ]
+rownames(group1) <- group1$external_gene_name
+
+# Add up/down regulation column
+group1$g1 <- "normal"
+group1$g1[group1$logFC >  log2(1) & group1$FDR < 0.05] <- "up"
+group1$g1[group1$logFC < -log2(1) & group1$FDR < 0.05] <- "down"
+table(group1$g1)
+
+# Get differentially expressed genes and build ranked list
+DEGs      <- group1[group1$g1 != "normal", ]
+DEGs      <- DEGs[order(DEGs$logFC, decreasing = TRUE), ]
+genelist  <- setNames(DEGs$logFC, DEGs$external_gene_name)
+
+# Run GSEA and output all results
+egmt <- GSEA(genelist, TERM2GENE = geneset,
+             pvalueCutoff = 0.5, pAdjustMethod = "fdr",
+             minGSSize = 1, maxGSSize = 500)
+dotplot(egmt, showCategory = 10, label_format = 100, color = "pvalue")
+
+# Convert GO term descriptions to factors (ordered for plotting)
+dt             <- data.frame(egmt)
+dt$Description <- factor(dt$ID, levels = rev(dt$ID))
+dt             <- dt %>% filter(NES > 0)
+
+# Enrichment bar plot
+Fig6_supB <- ggplot() +
+  geom_bar(data = dt,
+           aes(x = NES, y = reorder(Description, NES)),
+           width = 0.5, fill = my_color_PMC[6], stat = "identity") +
+  theme_classic(base_size = 16) +
+  scale_x_continuous(expand = c(0, 0)) +
+  theme(axis.text.y = element_blank()) +    # Hide y-axis labels (shown as inline text)
+  geom_text(data = dt,
+            aes(x = 0.01, y = Description, label = Description),
+            size = 4.5, hjust = 0) +
+  geom_text(data = dt,
+            aes(x = 0.01, y = Description, label = core_enrichment),
+            color = "grey", size = 4, fontface = "italic", hjust = 0, vjust = 2.3) +
+  labs(x = "Normalized Enrichment Score (NES)", y = "Pathways")
+Fig6_supB
+
+# Sort pathway names as factor for bubble plot Y-axis
+dt       <- dt[order(dt$NES, decreasing = TRUE), ]
+dt$ID    <- factor(dt$ID, levels = dt$ID)
+dt$xlab  <- 1:nrow(dt)
+data_label     <- dt
+data_label$col <- "black"
+
+# GSEA bubble plot
+Fig6_supBB <- ggplot(data = dt, aes(x = xlab, y = NES)) +
+  geom_point(aes(size = setSize, alpha = -log10(pvalue)),
+             shape = 21, stroke = 0.7,            # stroke: point border width
+             fill = my_color_PMC["in vitro PMC Mφ"], colour = "black") +
+  scale_size_continuous(range = c(1, 10)) +
+  xlab("") + ylab("Normalized Enrichment Score (NES)") +
+  theme_classic(base_size = 16) +
+  scale_x_continuous(breaks = seq(0, 50, by = 5)) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.05))) +
+  guides(
+    size  = guide_legend(title = "Size"),
+    alpha = guide_legend(title = expression("-Log"[10] * " (p-value)"))
+  ) +
+  theme(
+    legend.text       = element_text(size = 16),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm"),
+    legend.title      = element_blank(),
+    axis.text         = element_text(face = "bold")
+  ) +
+  geom_text_repel(data = dt,
+                  aes(x = xlab, y = NES, label = ID),
+                  size               = 5,
+                  color              = data_label$col,
+                  force              = 20,            # Force pushing overlapping labels apart
+                  point.padding      = 0.5,           # Minimum distance between label and point
+                  min.segment.length = 0,             # Add connector line if length > 0
+                  hjust              = 1,             # Align right edge of label to position
+                  segment.color      = "grey20",
+                  segment.size       = 0.1,           # Connector line width
+                  segment.alpha      = 0.8,           # Connector line transparency
+                  nudge_y            = -0.1)          # Fine-tune label position along y-axis
+Fig6_supBB
+```
+
+
+# Supplementary Figure 6C: scPS Dot Plot — PMC vs nonPMC by Group
+```{r Sup_Figure_6C_dotplot}
+obj$group <- ifelse(obj$AS_HIV == "ASNN", "HIV-AS-",
+             ifelse(obj$AS_HIV == "ASNP", "HIV+AS-",
+             ifelse(obj$AS_HIV == "ASPN", "HIV-AS+",
+             ifelse(obj$AS_HIV == "ASPP", "HIV+AS+", NA))))
+
+obj$PMC_group <- paste(obj$PMC, obj$group)
+Idents(obj) <- "PMC_group"
+my_levels   <- c("nonPMC HIV-AS-", "PMC HIV-AS-",
+                 "nonPMC HIV+AS-", "PMC HIV+AS-",
+                 "nonPMC HIV-AS+", "PMC HIV-AS+",
+                 "nonPMC HIV+AS+", "PMC HIV+AS+")
+Idents(obj) <- factor(x = Idents(obj), levels = my_levels)
+
+Fig6_supC <- DotPlot(obj, features = features, assay = "scPS", dot.scale = 5) +
+  scale_size_area(max_size = 5) +
+  coord_flip() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text.y = element_text(angle = 0,  vjust = 1, hjust = 1)) +
+  xlab("") + ylab("") +
+  guides(size = guide_legend("Percent Expression")) +
+  scale_color_gradientn(colors = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10)) +
+  theme(
+    axis.text         = element_text(size = 16),
+    legend.text       = element_text(size = 12),
+    legend.title      = element_text(size = 12),
+    axis.line         = element_line(color = "black", size = 0.8),
+    axis.ticks        = element_line(color = "black", size = 0.8),
+    axis.ticks.length = unit(0.2, "cm")
+  )
+Fig6_supC
+```
+
+
+# Assemble and Save Supplementary Figure 6
+```{r Sup_Figure_6_assemble}
+combined_sup <- (Fig6_supA + Fig6_supB + plot_layout(widths = c(1, 1.2))) /
+  Fig6_supC + plot_layout(heights = c(4, 1))
+
+ggsave(filename = "Figure 6 sup.pdf", plot = combined_sup,
+       width = 25, height = 12, bg = "white")
+
+CairoPDF("Figure 6 F.pdf", width = 25, height = 4.5)
+Fig6_supC
+dev.off()
+```

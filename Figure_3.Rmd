@@ -1,0 +1,1020 @@
+---
+title: "Figure 3: DE Genes and Random Forest ML Analysis"
+output: html_document
+date: "2024-08-29"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Load Libraries and Set Parameters
+```{r setup, message=FALSE, warning=FALSE}
+library(readxl)
+library(openxlsx)
+library(dplyr)
+library(tidyverse)
+library(reshape2)
+library(ggplot2)
+library(ggpubr)
+library(ggprism)
+library(ggVennDiagram)
+library(VennDiagram)
+library(UpSetR)
+library(ComplexHeatmap)
+library(scCustomize)
+library(Seurat)
+library(randomForest)
+library(rfPermute)
+library(randomForestExplainer)
+library(caret)
+library(pROC)
+library(data.table)
+library(vip)
+library(doParallel)
+library(forcats)
+
+knitr::opts_chunk$set(output.width = 120)
+
+# DE filtering thresholds
+p_value      <- 0.05
+FC_threshold <- log2(1)
+min_threshold <- 0.1
+
+# Path to DE gene CSV files
+folder_path <- "DEGs across clusters and groups/"
+```
+
+
+# Figure 3 Venn Diagrams — DE Genes per Cluster Across Groups
+
+## CD14
+```{r Figure_3_Venn_CD14}
+csv_files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[grepl("CD14_", csv_files)]
+csv_list  <- lapply(csv_files, read.csv)
+extracted_strings <- sub(".*CD14_(.*)\\.csv", "\\1", csv_files)
+names(csv_list)   <- extracted_strings
+group <- extracted_strings[extracted_strings %in% c("ASNN_vs_ASNP", "ASNN_vs_ASPN", "ASNN_vs_ASPP")]
+
+DE_genes <- list()
+for (i in group) {
+  csv_list[[i]] <- csv_list[[i]] %>%
+    filter(p_val_adj < p_value & abs(avg_log2FC) > FC_threshold) %>%
+    filter(pct.1 > min_threshold | pct.2 > min_threshold)
+  DE_genes[[i]] <- csv_list[[i]]$X
+}
+
+selected_genes <- list(
+  ASNN_vs_ASNP = DE_genes$ASNN_vs_ASNP,
+  ASNN_vs_ASPN = DE_genes$ASNN_vs_ASPN,
+  ASNN_vs_ASPP = DE_genes$ASNN_vs_ASPP
+)
+selected_genes <- lapply(selected_genes, function(x) x[!grepl("\\.|MT-|^(RPS|RPL)", x)])
+
+p_CD14 <- ggVennDiagram(selected_genes,
+  category.names       = names(selected_genes),
+  set_color            = rev(my_color_group[names(my_color_group) != "ASNN"]),
+  set_size             = 0,
+  label                = "both",
+  label_color          = "black",
+  label_alpha          = 0,
+  label_size           = 5,
+  label_percent_digit  = 1,
+  edge_size            = 1) +
+  scale_fill_gradient(low = "white", high = "white") + NoLegend()
+p_CD14
+
+genes_df <- list()
+genes_df[["CD14"]] <- do.call(rbind, lapply(names(selected_genes), function(name) {
+  data.frame(Gene = selected_genes[[name]], List_Name = name, Cluster = "CD14")
+}))
+```
+
+## CD14-active
+```{r Figure_3_Venn_CD14_active}
+csv_files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[grepl("CD14-active", csv_files)]
+csv_list  <- lapply(csv_files, read.csv)
+extracted_strings <- sub(".*CD14-active_(.*)\\.csv", "\\1", csv_files)
+names(csv_list)   <- extracted_strings
+group <- extracted_strings[extracted_strings %in% c("ASNN_vs_ASNP", "ASNN_vs_ASPN", "ASNN_vs_ASPP")]
+
+DE_genes <- list()
+for (i in group) {
+  csv_list[[i]] <- csv_list[[i]] %>%
+    filter(p_val_adj < p_value & abs(avg_log2FC) > FC_threshold) %>%
+    filter(pct.1 > min_threshold | pct.2 > min_threshold)
+  DE_genes[[i]] <- csv_list[[i]]$X
+}
+
+selected_genes <- list(
+  ASNN_vs_ASNP = DE_genes$ASNN_vs_ASNP,
+  ASNN_vs_ASPN = DE_genes$ASNN_vs_ASPN,
+  ASNN_vs_ASPP = DE_genes$ASNN_vs_ASPP
+)
+selected_genes <- lapply(selected_genes, function(x) x[!grepl("\\.|MT-|^(RPS|RPL)", x)])
+
+p_CD14_active <- ggVennDiagram(selected_genes,
+  category.names       = names(selected_genes),
+  set_color            = rev(my_color_group[names(my_color_group) != "ASNN"]),
+  set_size             = 0,
+  label                = "both",
+  label_color          = "black",
+  label_alpha          = 0,
+  label_size           = 5,
+  label_percent_digit  = 1,
+  edge_size            = 1) +
+  scale_fill_gradient(low = "white", high = "white") + NoLegend()
+p_CD14_active
+
+genes_df[["CD14-active"]] <- do.call(rbind, lapply(names(selected_genes), function(name) {
+  if (length(selected_genes[[name]]) == 0) {
+    data.frame(Gene = "", List_Name = name, Cluster = "CD14-active")
+  } else {
+    data.frame(Gene = selected_genes[[name]], List_Name = name, Cluster = "CD14-active")
+  }
+}))
+```
+
+## CD16
+```{r Figure_3_Venn_CD16}
+csv_files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[grepl("CD16", csv_files)]
+csv_list  <- lapply(csv_files, read.csv)
+extracted_strings <- sub(".*CD16_(.*)\\.csv", "\\1", csv_files)
+names(csv_list)   <- extracted_strings
+group <- extracted_strings[extracted_strings %in% c("ASNN_vs_ASNP", "ASNN_vs_ASPN", "ASNN_vs_ASPP")]
+
+DE_genes <- list()
+for (i in group) {
+  csv_list[[i]] <- csv_list[[i]] %>%
+    filter(p_val_adj < p_value & abs(avg_log2FC) > FC_threshold) %>%
+    filter(pct.1 > min_threshold | pct.2 > min_threshold)
+  DE_genes[[i]] <- csv_list[[i]]$X
+}
+
+selected_genes <- list(
+  ASNN_vs_ASNP = DE_genes$ASNN_vs_ASNP,
+  ASNN_vs_ASPN = DE_genes$ASNN_vs_ASPN,
+  ASNN_vs_ASPP = DE_genes$ASNN_vs_ASPP
+)
+selected_genes <- lapply(selected_genes, function(x) x[!grepl("\\.|MT-|^(RPS|RPL)", x)])
+
+p_CD16 <- ggVennDiagram(selected_genes,
+  category.names       = names(selected_genes),
+  set_color            = rev(my_color_group[names(my_color_group) != "ASNN"]),
+  set_size             = 0,
+  label                = "both",
+  label_color          = "black",
+  label_alpha          = 0,
+  label_size           = 5,
+  label_percent_digit  = 1,
+  edge_size            = 1) +
+  scale_fill_gradient(low = "white", high = "white") + NoLegend()
+p_CD16
+
+genes_df[["CD16"]] <- do.call(rbind, lapply(names(selected_genes), function(name) {
+  if (length(selected_genes[[name]]) == 0) {
+    data.frame(Gene = "", List_Name = name, Cluster = "CD16")
+  } else {
+    data.frame(Gene = selected_genes[[name]], List_Name = name, Cluster = "CD16")
+  }
+}))
+```
+
+## PMC
+```{r Figure_3_Venn_PMC}
+csv_files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[grepl("PMC", csv_files)]
+csv_list  <- lapply(csv_files, read.csv)
+extracted_strings <- sub(".*PMC_(.*)\\.csv", "\\1", csv_files)
+names(csv_list)   <- extracted_strings
+group <- extracted_strings[extracted_strings %in% c("ASNN_vs_ASNP", "ASNN_vs_ASPN", "ASNN_vs_ASPP")]
+
+DE_genes <- list()
+for (i in group) {
+  csv_list[[i]] <- csv_list[[i]] %>%
+    filter(p_val_adj < p_value & abs(avg_log2FC) > FC_threshold) %>%
+    filter(pct.1 > min_threshold | pct.2 > min_threshold)
+  DE_genes[[i]] <- csv_list[[i]]$X
+}
+
+selected_genes <- list(
+  ASNN_vs_ASNP = DE_genes$ASNN_vs_ASNP,
+  ASNN_vs_ASPN = DE_genes$ASNN_vs_ASPN,
+  ASNN_vs_ASPP = DE_genes$ASNN_vs_ASPP
+)
+selected_genes <- lapply(selected_genes, function(x) x[!grepl("\\.|MT-|^(RPS|RPL)", x)])
+
+p_PMC <- ggVennDiagram(selected_genes,
+  category.names       = names(selected_genes),
+  set_color            = rev(my_color_group[names(my_color_group) != "ASNN"]),
+  set_size             = 0,
+  label                = "both",
+  label_color          = "black",
+  label_alpha          = 0,
+  label_size           = 5,
+  label_percent_digit  = 1,
+  edge_size            = 1) +
+  scale_fill_gradient(low = "white", high = "white") + NoLegend()
+p_PMC
+
+genes_df[["PMC"]] <- do.call(rbind, lapply(names(selected_genes), function(name) {
+  if (length(selected_genes[[name]]) == 0) {
+    data.frame(Gene = "", List_Name = name, Cluster = "PMC")
+  } else {
+    data.frame(Gene = selected_genes[[name]], List_Name = name, Cluster = "PMC")
+  }
+}))
+```
+
+
+# Figure 3A: Venn Diagram Across All Clusters
+```{r Figure_3A}
+housekeeping_genes <- read_xlsx("Housekeep gene set.xlsx")
+
+dat <- do.call(rbind, genes_df)
+dat <- dat[!grepl("^MT-|^MT|\\.|^(RPS|RPL)", dat$Gene), ]
+dat <- dat[!dat$Gene %in% housekeeping_genes$Symbol, ]
+
+dat$group <- ifelse(dat$List_Name == "ASNN_vs_ASPN", "HIV-AS+",
+             ifelse(dat$List_Name == "ASNN_vs_ASNP", "HIV+AS-",
+             ifelse(dat$List_Name == "ASNN_vs_ASPP", "HIV+AS+", NA)))
+dat$Cluster <- gsub("_", "/", dat$Cluster)
+
+selected_genes <- split(dat$Gene, dat$Cluster)
+
+Fig3_A <- ggVennDiagram(selected_genes,
+  category.names       = names(selected_genes),
+  set_color            = c("#FDBF6F", "#FF7F00", "#B15928", "#CCAFCA"),
+  set_size             = 5,
+  label                = "count",
+  label_color          = "black",
+  label_alpha          = 0,
+  label_size           = 5,
+  label_percent_digit  = 1,
+  edge_size            = 1) +
+  scale_fill_gradient(low = "white", high = "white")
+Fig3_A
+ggsave(filename = "Figure 3A.pdf", width = 8, height = 5, bg = "white")
+
+# Save unique DE gene list for ML model input
+data <- data.frame(Gene = unique(dat$Gene))
+write.csv(data, "Figure 3 DEGs for ML.csv")
+```
+
+
+# Upregulated DE Genes Across Clusters (for ML Feature Input)
+```{r Upregulated_DEGs_per_cluster}
+# Reset thresholds for upregulated-only filter
+p_value      <- 0.05
+FC_threshold <- log2(1)
+
+# CD14 — upregulated only
+csv_files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[grepl("CD14_", csv_files) & !grepl("CD14-active", csv_files)]
+csv_list  <- lapply(csv_files, read.csv)
+extracted_strings <- sub(".*CD14_(.*)\\.csv", "\\1", csv_files)
+names(csv_list)   <- extracted_strings
+group <- extracted_strings[extracted_strings %in% c("ASNN_vs_ASNP", "ASNN_vs_ASPN", "ASNN_vs_ASPP")]
+
+DE_genes <- list()
+for (i in group) {
+  csv_list[[i]] <- csv_list[[i]] %>% filter(p_val_adj < p_value & avg_log2FC > FC_threshold)
+  DE_genes[[i]] <- csv_list[[i]]$X
+}
+selected_genes <- list(
+  ASNN_vs_ASNP = DE_genes$ASNN_vs_ASNP,
+  ASNN_vs_ASPN = DE_genes$ASNN_vs_ASPN,
+  ASNN_vs_ASPP = DE_genes$ASNN_vs_ASPP
+)
+genes_df_up <- list()
+genes_df_up[["CD14"]] <- do.call(rbind, lapply(names(selected_genes), function(name) {
+  data.frame(Gene = selected_genes[[name]], List_Name = name, Cluster = "CD14")
+}))
+
+# CD14-active — upregulated only
+csv_files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[grepl("CD14-active", csv_files)]
+csv_list  <- lapply(csv_files, read.csv)
+extracted_strings <- sub(".*CD14-active_(.*)\\.csv", "\\1", csv_files)
+names(csv_list)   <- extracted_strings
+group <- extracted_strings[extracted_strings %in% c("ASNN_vs_ASNP", "ASNN_vs_ASPN", "ASNN_vs_ASPP")]
+
+DE_genes <- list()
+for (i in group) {
+  csv_list[[i]] <- csv_list[[i]] %>% filter(p_val_adj < p_value & avg_log2FC > FC_threshold)
+  DE_genes[[i]] <- csv_list[[i]]$X
+}
+selected_genes <- list(
+  ASNN_vs_ASNP = DE_genes$ASNN_vs_ASNP,
+  ASNN_vs_ASPN = DE_genes$ASNN_vs_ASPN,
+  ASNN_vs_ASPP = DE_genes$ASNN_vs_ASPP
+)
+genes_df_up[["CD14-active"]] <- do.call(rbind, lapply(names(selected_genes), function(name) {
+  data.frame(Gene = selected_genes[[name]], List_Name = name, Cluster = "CD14-active")
+}))
+
+# CD16 — upregulated only
+csv_files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[grepl("CD16", csv_files)]
+csv_list  <- lapply(csv_files, read.csv)
+extracted_strings <- sub(".*CD16_(.*)\\.csv", "\\1", csv_files)
+names(csv_list)   <- extracted_strings
+group <- extracted_strings[extracted_strings %in% c("ASNN_vs_ASNP", "ASNN_vs_ASPN", "ASNN_vs_ASPP")]
+
+DE_genes <- list()
+for (i in group) {
+  csv_list[[i]] <- csv_list[[i]] %>% filter(p_val_adj < p_value & avg_log2FC > FC_threshold)
+  DE_genes[[i]] <- csv_list[[i]]$X
+}
+selected_genes <- list(
+  ASNN_vs_ASNP = DE_genes$ASNN_vs_ASNP,
+  ASNN_vs_ASPN = DE_genes$ASNN_vs_ASPN,
+  ASNN_vs_ASPP = DE_genes$ASNN_vs_ASPP
+)
+genes_df_up[["CD16"]] <- do.call(rbind, lapply(names(selected_genes), function(name) {
+  data.frame(Gene = selected_genes[[name]], List_Name = name, Cluster = "CD16")
+}))
+
+# PMC — upregulated only
+csv_files <- list.files(path = folder_path, pattern = "\\.csv$", full.names = TRUE)
+csv_files <- csv_files[grepl("PMC", csv_files)]
+csv_list  <- lapply(csv_files, read.csv)
+extracted_strings <- sub(".*PMC_(.*)\\.csv", "\\1", csv_files)
+names(csv_list)   <- extracted_strings
+group <- extracted_strings[extracted_strings %in% c("ASNN_vs_ASNP", "ASNN_vs_ASPN", "ASNN_vs_ASPP")]
+
+DE_genes <- list()
+for (i in group) {
+  csv_list[[i]] <- csv_list[[i]] %>% filter(p_val_adj < p_value & avg_log2FC > FC_threshold)
+  DE_genes[[i]] <- csv_list[[i]]$X
+}
+selected_genes <- list(
+  ASNN_vs_ASNP = DE_genes$ASNN_vs_ASNP,
+  ASNN_vs_ASPN = DE_genes$ASNN_vs_ASPN,
+  ASNN_vs_ASPP = DE_genes$ASNN_vs_ASPP
+)
+genes_df_up[["PMC"]] <- do.call(rbind, lapply(names(selected_genes), function(name) {
+  data.frame(Gene = selected_genes[[name]], List_Name = name, Cluster = "PMC")
+}))
+
+# Combine, filter, and save upregulated DEG table
+dat_up <- do.call(rbind, genes_df_up)
+dat_up <- dat_up[!grepl("^MT-|^MT|\\.|^(RPS|RPL)", dat_up$Gene), ]
+dat_up <- dat_up[!dat_up$Gene %in% housekeeping_genes$Symbol, ]
+dat_up <- dat_up[dat_up$Gene %in% Genes_ML$Gene, ]
+dat_up$group <- ifelse(dat_up$List_Name == "ASNN_vs_ASPN", "HIV-AS+",
+               ifelse(dat_up$List_Name == "ASNN_vs_ASNP", "HIV+AS-",
+               ifelse(dat_up$List_Name == "ASNN_vs_ASPP", "HIV+AS+", NA)))
+dat_up$Cluster <- gsub("_", "/", dat_up$Cluster)
+write.csv(dat_up, "Figure 3 upregulated DEGs.csv")
+```
+
+
+# Random Forest ML Analysis
+
+## Step 1: Prepare Expression and Metadata
+```{r RF_prepare_data}
+Genes_ML  <- read.csv("Figure 3 DEGs for ML.csv", header = TRUE)
+Genes_ML  <- Genes_ML[!grepl("^MT-|^MT|\\.|^(RPS|RPL)", Genes_ML$Gene), ]
+
+# Exclude intermediate clusters
+small_obj <- subset(x = obj,
+                    idents = c("Intermediate", "Intermediate-metabolic", "Intermediate-interferon"),
+                    invert = TRUE)
+table(small_obj$cluster_num, small_obj$AS_HIV)
+
+SCT_data  <- small_obj[["SCT"]]@data[Genes_ML$Gene, ]
+meta_data <- small_obj@meta.data
+meta_data$cell_id <- rownames(meta_data)
+group_table <- unique(meta_data[, c("cluster_num", "AS_HIV")])
+```
+
+## Step 2: Define Sampling and Averaging Function
+```{r RF_sampling_function}
+set.seed(123)
+sample_and_average <- function(cluster, hiv_group, expr_data, meta_data, n_cells = 100) {
+  cells_in_group <- meta_data %>%
+    filter(cluster_num == cluster, AS_HIV == hiv_group) %>%
+    pull(cell_id)
+  if (length(cells_in_group) < n_cells) return(NULL)
+  sampled_cells <- sample(cells_in_group, n_cells)
+  averaged_expr <- rowMeans(expr_data[, sampled_cells, drop = FALSE])
+  return(averaged_expr)
+}
+```
+
+## Step 3: Generate Training Data by Bootstrap Sampling
+```{r RF_generate_training_data}
+Genes <- rownames(SCT_data)
+result_list <- list()
+
+for (i in 1:nrow(group_table)) {
+  cluster   <- group_table$cluster_num[i]
+  hiv_group <- group_table$AS_HIV[i]
+  group_name <- paste(cluster, hiv_group, sep = "_")
+  cat("Processing group:", group_name, "\n")
+  avg_matrix <- matrix(NA, nrow = length(Genes), ncol = 100)
+  rownames(avg_matrix) <- Genes
+  for (rep in 1:100) {
+    set.seed(123 + i * 1000 + rep)
+    avg_matrix[, rep] <- sample_and_average(
+      cluster   = cluster,
+      hiv_group = hiv_group,
+      expr_data = SCT_data,
+      meta_data = meta_data,
+      n_cells   = 100
+    )
+  }
+  result_list[[group_name]] <- avg_matrix
+}
+
+df_list <- list()
+for (group_name in names(result_list)) {
+  avg_matrix         <- as.data.frame(t(result_list[[group_name]]))
+  colnames(avg_matrix) <- gsub("-", "_", colnames(avg_matrix))
+  avg_matrix$status  <- gsub("-", "_", group_name)
+  df_list[[group_name]] <- avg_matrix
+}
+
+data <- bind_rows(df_list)
+data <- data %>% mutate(across(-ncol(data), as.numeric))
+data$status <- as.factor(data$status)
+```
+
+## Step 4: Split into Training and Validation Sets
+```{r RF_split_data}
+set.seed(123)
+train_index <- createDataPartition(y = data$status, p = 0.7, list = FALSE)
+train_data  <- data[train_index, ]
+val_data    <- data[-train_index, ]
+```
+
+## Step 5: Train Initial Random Forest Model
+```{r RF_initial_model}
+train_x <- train_data[, -ncol(data)]
+train_y <- train_data[, ncol(data)]
+
+set.seed(123)
+rf_model0 <- randomForest(status ~ .,
+                          data      = train_data,
+                          importance = TRUE,
+                          proximity  = TRUE)
+rf_model0
+
+# Plot OOB error vs number of trees
+plot(rf_model0, main = "OOB Error vs Number of Trees")
+n <- ncol(rf_model0$err.rate)
+legend("topright",
+       legend = colnames(rf_model0$err.rate),
+       lty = 1:n, col = 1:n)
+
+# Check number of trees at minimum overall OOB error
+which.min(rf_model0$err.rate[, 1])
+
+# Visualize tree node counts
+hist(treesize(rf_model0), main = "Number of Nodes per Tree", col = "red")
+
+# Training set confusion matrix
+predict_initial <- predict(rf_model0, newdata = train_data)
+matrix0 <- table(train_y, predict_initial)
+matrix0 <- round(matrix0 / rowSums(matrix0), 2)
+ggplot(data = as.data.frame(matrix0),
+       aes(x = predict_initial, y = train_y, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), vjust = 1) +
+  scale_fill_gradient(low = "white", high = "red") +
+  theme_minimal() +
+  labs(title = "Confusion Matrix (Training Set)", x = "Predicted", y = "Actual")
+```
+
+## Step 6: Hyperparameter Tuning
+```{r RF_hyperparameter_tuning}
+# Determine approximate number of features for mtry search
+sqrt(ncol(train_x))
+
+# Method: use caret with 5-fold cross-validation to tune mtry
+set.seed(123)
+trainControl <- trainControl(
+  method          = "cv",
+  summaryFunction = multiClassSummary,
+  number          = 5,
+  classProbs      = TRUE,
+  savePredictions = TRUE
+)
+cl <- makeCluster(detectCores() - 1)
+registerDoParallel(cl)
+levels(train_data$status) <- gsub("\\/", "_", levels(train_data$status))
+rfFit <- train(status ~ .,
+               data      = train_data,
+               method    = "rf",
+               ntree     = 100,
+               trControl = trainControl)
+stopCluster(cl)
+registerDoSEQ()
+gc()
+rfFit
+# The final value used for the model was mtry = 45
+
+# Tune ntree by fixing best mtry and comparing accuracy across ntree values
+set.seed(123)
+ctrl      <- trainControl(method = "cv", number = 5)
+bestgrid  <- expand.grid(mtry = 45)
+modellist <- list()
+ntree_list <- c(50, 100, 200, 300)
+for (ntree in ntree_list) {
+  cat("Training model with ntree =", ntree, "\n")
+  fit <- train(x          = train_x,
+               y          = train_y,
+               method     = "rf",
+               metric     = "Accuracy",
+               tuneGrid   = bestgrid,
+               trControl  = ctrl,
+               ntree      = ntree)
+  modellist[[as.character(ntree)]] <- fit
+}
+results <- resamples(modellist)
+summary(results)
+# Based on accuracy, ntree = 100 is optimal
+```
+
+## Step 7: Final Random Forest Model and Variable Importance
+```{r RF_final_model}
+# Retrain with best hyperparameters (mtry = 45, ntree = 200)
+set.seed(123)
+rf_model2 <- randomForest(x         = train_x,
+                          y         = train_y,
+                          mtry      = 45,
+                          ntree     = 200,
+                          nodesize  = 1,
+                          importance = TRUE,
+                          proximity  = TRUE)
+print(rf_model2)
+plot(rf_model2, lwd = 2, main = "OOB Error")
+
+n <- 30
+varImpPlot(rf_model2, main = "Variable Importance (Accuracy)", type = 1,
+           n.var = n, scale = TRUE, cex = 1)
+varImpPlot(rf_model2, main = "Variable Importance (Gini)", type = 2,
+           n.var = 30, scale = TRUE, cex = 1)
+```
+
+## Step 8: Variable Importance Bar Plot
+```{r RF_variable_importance}
+importance    <- varImpPlot(rf_model2, main = "Variable Importance (Accuracy)",
+                            type = 1, n.var = n, scale = TRUE, cex = 1)
+importance_df <- as.data.frame(importance)
+importance_df$variable <- rownames(importance_df)
+importance_df <- importance_df[order(-importance_df$MeanDecreaseAccuracy), ]
+
+# Set gradient color range
+color_range <- c("#C8EBF6", "#154778")
+
+# Horizontal bar chart of top variable importances
+ggplot(importance_df[1:n, ],
+       aes(x = reorder(variable, MeanDecreaseAccuracy),
+           y = MeanDecreaseAccuracy,
+           fill  = MeanDecreaseAccuracy,
+           label = round(MeanDecreaseAccuracy, 2))) +
+  geom_bar(stat = "identity") +
+  geom_text(size = 3, position = position_stack(vjust = 0.5), color = "black") +
+  scale_fill_gradient(low = color_range[1], high = color_range[2]) +
+  theme(
+    plot.title  = element_text(hjust = 0.5, size = 16),
+    axis.text   = element_text(size = 12),
+    axis.title  = element_text(size = 15)
+  ) +
+  labs(title = "", x = "", y = "Mean Decrease Accuracy") +
+  coord_flip() + theme_classic()
+```
+
+## Step 9: MDS Plot
+```{r RF_MDS_plot}
+MDSplot(rf_model2, train_data$status,
+        main = "Multi-Dimensional Scaling Plot of Proximity Matrix",
+        pch  = 19)
+legend("right",
+       legend  = levels(train_data$status),
+       col     = 1:length(levels(train_data$status)),
+       pch     = 19,
+       cex     = 0.8,
+       xpd     = TRUE,
+       inset   = -1)
+```
+
+## Step 10: Apply Model to Validation Set
+```{r RF_validation}
+val_x <- val_data[, -ncol(data)]
+val_y <- val_data[, ncol(data)]
+
+# Predict on validation set
+predict_val <- predict(rf_model2, newdata = val_x)
+matrix0     <- table(val_y, predict_val)
+matrix0     <- round(matrix0 / rowSums(matrix0), 2)
+
+ggplot(data = as.data.frame(matrix0),
+       aes(x = predict_val, y = val_y, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), vjust = 1) +
+  scale_fill_gradient(low = "white", high = "red") +
+  theme_minimal() +
+  labs(title = "Confusion Matrix (Validation Set)", x = "Predicted", y = "Actual")
+```
+
+## Step 11: ROC Curves (Validation Set)
+```{r RF_ROC_curves}
+val_predprob  <- predict(rf_model2, newdata = val_data, type = "prob")
+val_classes   <- colnames(val_predprob)
+roc_list_val  <- list()
+auc_results_val <- data.frame(Class = character(), AUC = numeric(), stringsAsFactors = FALSE)
+
+for (cls in val_classes) {
+  response_bin <- ifelse(val_data$status == cls, 1, 0)
+  roc_obj      <- roc(response = response_bin, predictor = val_predprob[, cls])
+  roc_df       <- data.frame(
+    Specificity = 1 - roc_obj$specificities,
+    Sensitivity = roc_obj$sensitivities,
+    Class = cls
+  )
+  roc_list_val[[cls]] <- roc_df
+  auc_results_val <- rbind(auc_results_val,
+                           data.frame(Class = cls, AUC = as.numeric(auc(roc_obj))))
+}
+
+# Merge all ROC curve data
+roc_data_val <- do.call(rbind, roc_list_val)
+
+# Multi-class ROC plot
+Fig3_supA <- ggplot(roc_data_val, aes(x = Specificity, y = Sensitivity, color = Class)) +
+  geom_line(size = 1.2) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  theme_classic() +
+  labs(title = "Multi-class ROC Curves (Validation Set)",
+       x = "1 - Specificity", y = "Sensitivity")
+Fig3_supA
+ggsave(filename = "Figure 3 Sup A.pdf", width = 8, height = 6, bg = "white")
+```
+
+## Step 12: Calibration Curves (Validation Set)
+```{r RF_calibration}
+calibration_data_val <- data.frame()
+true_classes_val     <- as.character(val_data$status)
+
+for (cls in val_classes) {
+  response_bin   <- ifelse(true_classes_val == cls, 1, 0)
+  predictor_prob <- val_predprob[, cls]
+  cuts           <- quantile(predictor_prob, probs = seq(0, 1, 0.1), na.rm = TRUE)
+  cut_groups     <- cut(predictor_prob, breaks = unique(cuts), include.lowest = TRUE)
+  mean_pred      <- tapply(predictor_prob, cut_groups, mean)
+  mean_obs       <- tapply(response_bin,   cut_groups, mean)
+  df             <- data.frame(Predicted = mean_pred, Observed = mean_obs, Class = cls)
+  calibration_data_val <- rbind(calibration_data_val, df)
+}
+calibration_data_val <- calibration_data_val[complete.cases(calibration_data_val), ]
+
+ggplot(calibration_data_val, aes(x = Predicted, y = Observed, color = Class)) +
+  geom_point(size = 2) +
+  geom_line(size = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  theme_minimal() +
+  labs(title = "Calibration Curves (Validation Set)",
+       x = "Mean Predicted Probability",
+       y = "Observed Proportion") +
+  theme(legend.title = element_blank())
+```
+
+## Step 13: Random Forest Model Explainer
+```{r RF_explainer}
+library(randomForestExplainer)
+
+# Minimum depth distribution
+min_depth_frame <- min_depth_distribution(rf_model2)
+head(min_depth_frame, n = 10)
+plot_min_depth_distribution(min_depth_frame)
+
+# Compute multiple variable importance metrics simultaneously
+importance_forest <- measure_importance(rf_model2)
+
+# Visualize mean_min_depth vs times_a_root, with point size = no_of_nodes (3 metrics)
+Fig3_supB <- plot_multi_way_importance(importance_forest,
+                                       size_measure  = "no_of_nodes",
+                                       no_of_labels  = 100) + ggtitle("")
+Fig3_supB
+
+# Visualize accuracy_decrease vs gini_decrease with point size = p_value
+Fig3_supC <- plot_multi_way_importance(importance_forest,
+                                       x_measure    = "accuracy_decrease",
+                                       y_measure    = "gini_decrease",
+                                       size_measure = "p_value",
+                                       no_of_labels = 100) + ggtitle("")
+Fig3_supC
+
+Fig3_supABC <- Fig3_supA + Fig3_supB + Fig3_supC
+ggsave(filename = "Figure 3 Sup A-C.pdf", width = 20, height = 6, bg = "white")
+```
+
+## Step 14: rfPermute — Permutation-Based Significance Testing
+```{r RF_permute}
+pmt2 <- rfPermute(status ~ .,
+                  data      = train_data,
+                  ntree     = 200,
+                  mtry      = 45,
+                  importance = TRUE,
+                  num.rep   = 100,
+                  num.cores = parallel::detectCores() - 1)
+saveRDS(pmt2, file = "RandomForest Permute model.rds")
+
+# Extract and merge permutation p-values
+pvalues2           <- data.frame(pmt2$pval[, , 2][, (ncol(pmt2$pval) - 1):ncol(pmt2$pval)])
+colnames(pvalues2) <- c("Accuracy.p", "Gini.p")
+pvalues2$variable  <- rownames(pvalues2)
+rf_result2         <- merge(importance_forest, pvalues2, by = "variable")
+
+# Add significance labels
+rf_result2$Gini.p_sig <- ifelse(rf_result2$Gini.p <= 0.001, "***",
+                          ifelse(rf_result2$Gini.p <= 0.01, "**",
+                          ifelse(rf_result2$Gini.p <= 0.05, "*", "")))
+rf_result2$Accuracy.p_sig <- ifelse(rf_result2$Accuracy.p <= 0.001, "***",
+                              ifelse(rf_result2$Accuracy.p <= 0.01, "**",
+                              ifelse(rf_result2$Accuracy.p <= 0.05, "*", "")))
+```
+
+## Step 15: Filter Top Features and Plot (Supplementary Figure 3D)
+```{r RF_top_features}
+# Filter genes by multi-criteria importance thresholds
+rf_subset <- subset(rf_result2,
+  (times_a_root > quantile(times_a_root, 0.75, na.rm = TRUE) &
+     mean_min_depth < quantile(mean_min_depth, 0.25, na.rm = TRUE)) |
+  (gini_decrease > quantile(gini_decrease, 0.75, na.rm = TRUE) &
+     accuracy_decrease > quantile(accuracy_decrease, 0.75, na.rm = TRUE)) |
+  (Accuracy.p < 0.05 & Gini.p < 0.05)
+)
+rf_subset <- rf_subset[order(-rf_subset$accuracy_decrease, -rf_subset$gini_decrease), ]
+rf_subset$variable <- factor(rf_subset$variable, levels = rf_subset$variable)
+rf_subset <- rf_subset[rf_subset$variable != "XIST", ]
+
+color_range <- c("#C8EBF6", "#154778")
+
+Fig3_supD <- ggplot(rf_subset[1:100, ],
+                    aes(x = variable, y = accuracy_decrease, fill = accuracy_decrease)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  geom_text(aes(label = Accuracy.p_sig, y = accuracy_decrease), size = 5) +
+  scale_fill_gradient(low = color_range[1], high = color_range[2]) +
+  labs(y = "Accuracy Decrease Score", x = "") +
+  theme_classic() +
+  theme(
+    axis.text.y  = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid   = element_blank(),
+    axis.text.x  = element_text(size = 10, face = "bold", angle = 90, hjust = 1)
+  )
+
+Fig3_supABC / Fig3_supD
+ggsave(filename = "Figure 3 Sup A-D.pdf", width = 18, height = 10, bg = "white")
+```
+
+## Step 16: Select Top 100 ML Genes
+```{r RF_top100_genes}
+data <- read.csv("Figure 3 RandomForest permute model importance score filtered.csv", header = TRUE)
+data_1 <- data %>%
+  arrange(desc(accuracy_decrease)) %>%
+  slice_head(n = 100)
+```
+
+
+# Figure 3B: UpSet Plot — ML Top Genes vs Cluster-Specific Upregulated DEGs
+```{r Figure_3B}
+dat <- read.csv("Figure 3 upregulated genes.csv", header = TRUE)
+dat <- dat[dat$Gene %in% data_1$variable, ]
+dat$group <- factor(dat$group, levels = c("HIV+AS-", "HIV-AS+", "HIV+AS+"))
+genes_df  <- split(dat$Gene, dat$Cluster)
+
+# Intersect ML top genes with cluster-specific upregulated DEGs
+DEgenes <- list(
+  CD14       = intersect(data_1$variable, genes_df[["CD14"]]),
+  CD14_active = intersect(data_1$variable, genes_df[["CD14-active"]]),
+  CD16       = intersect(data_1$variable, genes_df[["CD16"]]),
+  PMC        = intersect(data_1$variable, genes_df[["PMC"]])
+)
+
+# Color settings for UpSet plot
+main_bar_col <- "violetred4"
+matrix_col   <- "black"
+shade_col    <- "grey"
+
+Venn_data <- fromList(DEgenes)
+Fig3_B <- upset(Venn_data,
+  sets          = c("CD14", "CD14_active", "CD16", "PMC"),
+  sets.bar.color = c("#FDBF6F", "#FF7F00", "#B15928", "#CCAFCA"),
+  keep.order    = TRUE,
+  order.by      = "degree",
+  point.size    = 3,
+  line.size     = 1,
+  number.angles = 0,
+  text.scale    = 2,
+  main.bar.color = main_bar_col,
+  matrix.color  = matrix_col,
+  shade.color   = shade_col,
+  sets.x.label  = "Size"
+)
+pdf(file = "Figure 3B.pdf", width = 8, height = 5)
+Fig3_B
+dev.off()
+```
+
+## Check Shared Genes Across Clusters
+```{r check_shared_genes}
+# Genes shared across all clusters
+Reduce(intersect, DEgenes)
+
+# Count how many clusters each gene appears in
+gene_counts    <- table(unlist(DEgenes))
+shared_genes_4 <- names(gene_counts[gene_counts == 4])
+shared_genes_3 <- names(gene_counts[gene_counts == 3])
+shared_genes_2 <- names(gene_counts[gene_counts == 2])
+shared_genes_1 <- names(gene_counts[gene_counts == 1])
+shared_genes_4
+shared_genes_3
+shared_genes_2
+shared_genes_1
+
+# Identify genes unique to PMC
+ClusterX        <- "PMC"
+other_clusters  <- setdiff(names(DEgenes), ClusterX)
+other_genes     <- unlist(DEgenes[other_clusters])
+unique_to_ClusterX <- setdiff(DEgenes[[ClusterX]], other_genes)
+unique_to_ClusterX
+```
+
+
+# Figure 3C–F: Clustered Dot Plots per Cluster
+```{r Figure_3C-F}
+# Add group labels to Seurat object
+obj$group <- ifelse(obj$AS_HIV == "ASNN", "HIV-AS-",
+             ifelse(obj$AS_HIV == "ASNP", "HIV+AS-",
+             ifelse(obj$AS_HIV == "ASPN", "HIV-AS+",
+             ifelse(obj$AS_HIV == "ASPP", "HIV+AS+", NA))))
+my_levels <- c("HIV-AS-", "HIV+AS-", "HIV-AS+", "HIV+AS+")
+
+Idents(obj) <- "cluster_num"
+plots <- list()
+
+# CD14
+obj_downsample <- subset(x = obj, idents = "CD14")
+Idents(obj_downsample) <- factor(obj_downsample$group, levels = my_levels)
+plots[["CD14"]] <- Clustered_DotPlot(
+  seurat_object    = obj_downsample,
+  assay            = "SCT",
+  cluster_ident    = FALSE,
+  x_lab_rotate     = 90,
+  row_names_side   = "left",
+  row_label_size   = 12,
+  column_label_size = 12,
+  flip             = FALSE,
+  colors_use_exp   = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10),
+  features         = DEgenes$CD14,
+  k                = 4,
+  colors_use_idents = rev(my_color_group),
+  seed             = 12345
+)[[2]]
+
+# CD14-active
+obj_downsample <- subset(x = obj, idents = "CD14-active")
+Idents(obj_downsample) <- factor(obj_downsample$group, levels = my_levels)
+plots[["CD14-active"]] <- Clustered_DotPlot(
+  seurat_object    = obj_downsample,
+  cluster_ident    = FALSE,
+  x_lab_rotate     = 90,
+  row_names_side   = "left",
+  row_label_size   = 12,
+  column_label_size = 12,
+  flip             = FALSE,
+  colors_use_exp   = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10),
+  features         = DEgenes$CD14_active,
+  k                = 4,
+  colors_use_idents = rev(my_color_group),
+  seed             = 12345
+)[[2]]
+
+# CD16
+obj_downsample <- subset(x = obj, idents = "CD16")
+Idents(obj_downsample) <- factor(obj_downsample$group, levels = my_levels)
+plots[["CD16"]] <- Clustered_DotPlot(
+  seurat_object    = obj_downsample,
+  cluster_ident    = FALSE,
+  x_lab_rotate     = 90,
+  row_names_side   = "left",
+  row_label_size   = 12,
+  column_label_size = 12,
+  flip             = FALSE,
+  colors_use_exp   = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10),
+  features         = DEgenes$CD16,
+  k                = 4,
+  colors_use_idents = rev(my_color_group),
+  seed             = 12345
+)[[2]]
+
+# PMC
+obj_downsample <- subset(x = obj, idents = "PMC")
+Idents(obj_downsample) <- factor(obj_downsample$group, levels = my_levels)
+plots[["PMC"]] <- Clustered_DotPlot(
+  seurat_object    = obj_downsample,
+  cluster_ident    = FALSE,
+  x_lab_rotate     = 90,
+  row_names_side   = "left",
+  row_label_size   = 12,
+  column_label_size = 12,
+  flip             = FALSE,
+  colors_use_exp   = colorRampPalette(c("#1F78B4", "white", "#FFED99", "#FF7600"))(10),
+  features         = DEgenes$PMC,
+  k                = 4,
+  colors_use_idents = rev(my_color_group),
+  seed             = 12345
+)[[2]]
+
+# Arrange all four plots in a 2x2 grid using ComplexHeatmap viewports
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(nrow = 2, ncol = 2)))
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1)); draw(plots[["CD14"]],       newpage = FALSE); popViewport()
+pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1)); draw(plots[["CD14-active"]], newpage = FALSE); popViewport()
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 2)); draw(plots[["CD16"]],        newpage = FALSE); popViewport()
+pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 2)); draw(plots[["PMC"]],         newpage = FALSE); popViewport()
+# Save as portrait 18 x 15 inches
+```
+
+
+# Step 17: Cross-Validation Recursive Feature Elimination
+```{r RF_cross_validation}
+set.seed(123)
+train.rfcv <- rfcv(trainx   = train_data[, -ncol(data)],
+                   trainy   = train_data$status,
+                   cv.fold  = 5,
+                   recursive = TRUE)
+train.rfcv$n.var
+train.rfcv$error.cv
+with(train.rfcv, plot(n.var, error.cv, type = "o", lwd = 2))
+
+# Repeat cross-validation 5 times and plot smoothed error curve
+train.re.rfcv           <- data.frame(sapply(train.re.rfcv, "[[", "error.cv"))
+train.re.rfcv$variables <- rownames(train.re.rfcv)
+train.re.rfcv           <- reshape2::melt(train.re.rfcv, id = "variables")
+train.re.rfcv$variables <- as.numeric(as.character(train.re.rfcv$variables))
+
+plot.rfcv <- ggplot(train.re.rfcv, aes(variables, value)) +
+  geom_smooth(se = FALSE) +
+  theme(
+    panel.grid       = element_blank(),
+    panel.background = element_rect(color = "black", fill = "transparent")
+  ) +
+  labs(x = "Number of Variables", y = "Cross-Validation Error")
+plot.rfcv
+```
+
+
+# Supplementary Figure 3E–F: ML Gene Features by Group and Cluster
+```{r Sup_Figure_3E-F}
+dat <- read.csv("Figure 3 upregulated DEGs.csv", header = TRUE)
+dat <- dat[dat$Gene %in% data_1$variable, ]
+dat$group <- factor(dat$group, levels = c("HIV+AS-", "HIV-AS+", "HIV+AS+"))
+
+# Supplementary Figure 3E: Venn diagram by group
+selected_genes <- split(dat$Gene, dat$group)
+Fig3_Sup_E <- ggVennDiagram(selected_genes,
+  category.names       = names(selected_genes),
+  set_color            = c("#A6CEE3", "#ffa725", "#ff6b6d"),
+  set_size             = 0,
+  label                = "count",
+  label_color          = "black",
+  label_alpha          = 0,
+  label_size           = 5,
+  label_percent_digit  = 1,
+  edge_size            = 1) +
+  scale_fill_gradient(low = "white", high = "white")
+Fig3_Sup_E
+ggsave(filename = "Figure 3 Sup E.pdf", width = 3, height = 3, bg = "white")
+
+# Supplementary Figure 3F: UpSet plot by cluster and group
+dat$group <- paste0(dat$Cluster, " ", dat$group)
+selected_genes <- split(dat$Gene, dat$group)
+Venn_data      <- fromList(selected_genes)
+
+Fig3_Sup_F <- upset(Venn_data,
+  sets            = names(selected_genes),
+  keep.order      = TRUE,
+  order.by        = "freq",
+  point.size      = 3,
+  line.size       = 1,
+  number.angles   = 0,
+  text.scale      = 2,
+  nintersects     = NA,
+  main.bar.color  = "black",
+  sets.bar.color  = rep(c("#FDBF6F", "#FF7F00", "#B15928", "#CCAFCA"), each = 3),
+  matrix.color    = "black",
+  shade.color     = "grey",
+  sets.x.label    = ""
+)
+pdf(file = "Figure 3 Sup F.pdf", width = 25, height = 10)
+Fig3_Sup_F
+dev.off()
+```

@@ -1,0 +1,513 @@
+---
+title: "Figure 7: In Vitro PMC Mφ Cytokine and Functional Marker Responses"
+output: html_document
+date: "2024-08-29"
+editor_options:
+  chunk_output_type: console
+---
+
+
+# Load Libraries and Define Colors
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+library(broom)
+library(rstatix)
+library(Cairo)
+library(ggbeeswarm) 
+
+
+
+my_color_group <- c(
+  "LPS+oxLDL" = "#ff6b6d",
+  "oxLDL"     = "#ffa725",
+  "LPS"       = "#A6CEE3",
+  "Control"   = "lightgrey"
+)
+
+# Shared group level order used across all figures
+group_levels_all <- c(
+  "nonPMC", "nonPMC+LPS", "nonPMC+oxLDL", "nonPMC+LPS+oxLDL",
+  "PMC",    "PMC+LPS",    "PMC+oxLDL",    "PMC+LPS+oxLDL"
+)
+
+# Shared group recode mapping
+group_recode <- c(
+  "Non.PMC.Control"   = "nonPMC",
+  "Non.PMC.LPS"       = "nonPMC+LPS",
+  "Non.PMC.oxLDL"     = "nonPMC+oxLDL",
+  "Non.PMC.LPS.oxLDL" = "nonPMC+LPS+oxLDL",
+  "PMC.Control"       = "PMC",
+  "PMC.LPS"           = "PMC+LPS",
+  "PMC.oxLDL"         = "PMC+oxLDL",
+  "PMC.LPS.oxLDL"     = "PMC+LPS+oxLDL"
+)
+```
+
+
+# Load and Reshape ELISA Data (Figures 7A–B)
+```{r load_elisa_data}
+dat <- data.frame(read.csv("Figure 7A-B ELISAs of cytokines.csv"))
+
+dat_long <- dat %>%
+  dplyr::rename(sample = X) %>%
+  pivot_longer(
+    cols      = c("Non.PMC.Control", "Non.PMC.LPS", "Non.PMC.oxLDL", "Non.PMC.LPS.oxLDL",
+                  "PMC.Control",     "PMC.LPS",     "PMC.oxLDL",     "PMC.LPS.oxLDL"),
+    names_to  = "Group",
+    values_to = "Expression"
+  ) %>%
+  mutate(
+    # Extract treatment condition from group name
+    Treatment = case_when(
+      endsWith(Group, ".LPS.oxLDL") ~ "LPS+oxLDL",
+      endsWith(Group, ".oxLDL")     ~ "oxLDL",
+      endsWith(Group, ".LPS")       ~ "LPS",
+      endsWith(Group, ".Control")   ~ "Control",
+      TRUE                          ~ NA_character_
+    ),
+    # Extract cell type from group name
+    CellType = case_when(
+      startsWith(Group, "Non.PMC") ~ "in vitro Mφ",
+      startsWith(Group, "PMC")     ~ "in vitro PMC Mφ",
+      TRUE                         ~ NA_character_
+    ),
+    # Recode day labels
+    Day = case_when(
+      startsWith(as.character(Day), "7") ~ "6d",
+      startsWith(as.character(Day), "4") ~ "72 hrs",
+      TRUE                               ~ NA_character_
+    )
+  )
+```
+
+
+# Figure 7A: TGF-β and IL-10 ELISA Bar Plots
+```{r Figure_7A}
+# Filter to IL-10 and TGFb and apply factor levels
+dat_1 <- dat_long %>%
+  filter(Cytokine %in% c("IL10", "TGFb")) %>%
+  mutate(
+    Group = recode_factor(
+      factor(Group, levels = names(group_recode)),
+      !!!group_recode
+    )
+  )
+dat_1$Treatment <- factor(dat_1$Treatment, levels = c("Control", "LPS", "oxLDL", "LPS+oxLDL"))
+dat_1$Group     <- factor(dat_1$Group,     levels = group_levels_all)
+dat_1$Cytokine  <- factor(dat_1$Cytokine,  levels = c("TGFb", "IL10"))
+dat_1$Day       <- factor(dat_1$Day,       levels = c("72 hrs", "6d"))
+
+# Compute group means and standard errors
+dat_s <- dat_1 %>%
+  group_by(Group, Day, Cytokine, Treatment, CellType) %>%
+  summarise(
+    mean_expr = mean(Expression, na.rm = TRUE),
+    sd        = sd(Expression,   na.rm = TRUE),
+    n         = n(),
+    se        = sd(Expression,   na.rm = TRUE) / sqrt(n()),
+    .groups   = "drop"
+  )
+
+# Tukey HSD post-hoc test; filter to biologically meaningful comparisons
+pvals <- dat_1 %>%
+  group_by(Day, Cytokine) %>%
+  tukey_hsd(Expression ~ Group) %>%
+  mutate(comparison = paste(group1, group2, sep = "-")) %>%
+  filter(p.adj <= 0.05) %>%
+  mutate(p_label = sprintf("p<%1.2g", round(p.adj, 3) + 1e-3)) %>%
+  filter(comparison %in% c(
+    "nonPMC-PMC",
+    "nonPMC+LPS-PMC+LPS",
+    "nonPMC+oxLDL-PMC+oxLDL",
+    "nonPMC+LPS+oxLDL-PMC+LPS+oxLDL",
+    "nonPMC-nonPMC+LPS",
+    "nonPMC-nonPMC+oxLDL",
+    "nonPMC-nonPMC+LPS+oxLDL",
+    "PMC-PMC+LPS",
+    "PMC-PMC+oxLDL",
+    "PMC-PMC+LPS+oxLDL"
+  ))
+
+# Build staggered bracket positions for significance annotations
+brackets <- dat_s %>%
+  group_by(Day, Cytokine) %>%
+  summarise(max_y = max(mean_expr + se), .groups = "drop") %>%
+  left_join(pvals, by = c("Day", "Cytokine")) %>%
+  filter(!is.na(group1), !is.na(group2)) %>%
+  distinct(Day, Cytokine, group1, group2, .keep_all = TRUE) %>%
+  mutate(
+    bracket_id = row_number(),
+    y.position = max_y * (1.10 + bracket_id * 0.10),  # Stagger bracket heights
+    xmin       = group1,
+    xmax       = group2
+  ) %>%
+  ungroup()
+
+p1 <- ggplot(dat_s, aes(x = Group, y = mean_expr, fill = Treatment)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.2)) +
+  geom_errorbar(
+    aes(ymin = mean_expr - se, ymax = mean_expr + se),
+    width    = 0.1,
+    position = position_dodge(width = 0.2),
+    color    = "grey"
+  ) +
+  stat_pvalue_manual(
+    data       = brackets,
+    label      = "p_label",
+    xmin       = "xmin",
+    xmax       = "xmax",
+    y.position = "y.position",
+    size       = 5
+  ) +
+  scale_fill_manual(values = my_color_group) +
+  theme_classic(base_size = 20) +
+  xlab("") + ylab("pg/mL") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~ Day + Cytokine, scales = "free_y")
+p1
+```
+
+
+# Figure 7B: Pro-inflammatory Cytokine ELISA Bar Plots (Day 6)
+```{r Figure_7B}
+# Filter to day 6 and pro-inflammatory cytokines (exclude IL-10 and TGFb)
+dat_1 <- dat_long %>%
+  filter(Day == "6d") %>%
+  filter(!Cytokine %in% c("IL10", "TGFb")) %>%
+  filter(!is.na(Expression)) %>%
+  mutate(
+    Group = recode_factor(
+      factor(Group, levels = names(group_recode)),
+      !!!group_recode
+    )
+  )
+dat_1$Treatment <- factor(dat_1$Treatment, levels = c("LPS", "LPS+oxLDL"))
+dat_1$Cytokine  <- factor(dat_1$Cytokine,  levels = c("TNFa", "IL1b", "IL6"))
+
+# Compute group means and standard errors
+dat_s <- dat_1 %>%
+  group_by(Group, Day, Cytokine, Treatment, CellType) %>%
+  summarise(
+    mean_expr = mean(Expression, na.rm = TRUE),
+    sd        = sd(Expression,   na.rm = TRUE),
+    n         = n(),
+    se        = sd(Expression,   na.rm = TRUE) / sqrt(n()),
+    .groups   = "drop"
+  )
+
+# Tukey HSD; keep all significant comparisons
+pvals <- dat_1 %>%
+  group_by(Day, Cytokine) %>%
+  tukey_hsd(Expression ~ Group) %>%
+  mutate(comparison = paste(group1, group2, sep = "-")) %>%
+  filter(p.adj <= 0.05) %>%
+  mutate(p_label = sprintf("p<%1.2g", round(p.adj, 3) + 1e-3))
+
+# Build staggered bracket positions
+brackets <- dat_s %>%
+  group_by(Day, Cytokine) %>%
+  summarise(max_y = max(mean_expr + se), .groups = "drop") %>%
+  left_join(pvals, by = c("Day", "Cytokine")) %>%
+  filter(!is.na(group1), !is.na(group2)) %>%
+  distinct(Day, Cytokine, group1, group2, .keep_all = TRUE) %>%
+  mutate(
+    bracket_id = row_number(),
+    y.position = max_y * (1.10 + bracket_id * 0.10),  # Stagger bracket heights
+    xmin       = group1,
+    xmax       = group2
+  ) %>%
+  ungroup()
+
+p2 <- ggplot(dat_s, aes(x = Group, y = mean_expr, fill = Treatment)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.2)) +
+  geom_errorbar(
+    aes(ymin = mean_expr - se, ymax = mean_expr + se),
+    width    = 0.1,
+    position = position_dodge(width = 0.2),
+    color    = "grey"
+  ) +
+  stat_pvalue_manual(
+    data       = brackets,
+    label      = "p_label",
+    xmin       = "xmin",
+    xmax       = "xmax",
+    y.position = "y.position",
+    size       = 5
+  ) +
+  scale_fill_manual(values = my_color_group) +
+  theme_classic(base_size = 20) +
+  xlab("") + ylab("pg/mL") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~ Day + Cytokine, scales = "free_y")
+p2
+```
+
+
+# Assemble and Save Figure 7A–B
+```{r Figure_7AB_save}
+p <- p1 + p2 + plot_layout(guides = "collect", widths = c(1.8, 1))
+p
+ggsave("Figure 7A-B.pdf", plot = p, width = 25, height = 8)
+```
+
+
+# Figure 7C: Flow Cytometry Functional Marker Bar Plots
+```{r Figure_7C}
+dat <- data.frame(read.csv("Figure 7C Flow cytometry of fuctional markers.csv"))
+dat <- dat[, 1:10] %>% na.omit()
+
+# Reshape from wide to long format
+dat_long <- dat %>%
+  dplyr::rename(sample = X) %>%
+  pivot_longer(
+    cols      = c("Non.PMC.Control", "Non.PMC.LPS", "Non.PMC.oxLDL", "Non.PMC.LPS.oxLDL",
+                  "PMC.Control",     "PMC.LPS",     "PMC.oxLDL",     "PMC.LPS.oxLDL"),
+    names_to  = "Group",
+    values_to = "Expression"
+  ) %>%
+  mutate(
+    # Extract treatment condition from group name
+    Treatment = case_when(
+      endsWith(Group, ".LPS.oxLDL") ~ "LPS+oxLDL",
+      endsWith(Group, ".oxLDL")     ~ "oxLDL",
+      endsWith(Group, ".LPS")       ~ "LPS",
+      endsWith(Group, ".Control")   ~ "Control",
+      TRUE                          ~ NA_character_
+    ),
+    # Extract cell type from group name
+    CellType = case_when(
+      startsWith(Group, "Non.PMC") ~ "in vitro Mφ",
+      startsWith(Group, "PMC")     ~ "in vitro PMC Mφ",
+      TRUE                         ~ NA_character_
+    ),
+    # Recode group labels
+    Group = recode(Group, !!!group_recode)
+  )
+
+dat_long$Treatment <- factor(dat_long$Treatment, levels = c("Control", "LPS", "oxLDL", "LPS+oxLDL"))
+dat_long$Group     <- factor(dat_long$Group,     levels = group_levels_all)
+dat_long$Gene      <- factor(dat_long$Gene,      levels = sort(unique(dat_long$Gene)))
+
+# Compute group means and standard errors
+dat_s <- dat_long %>%
+  group_by(Group, Gene, Treatment, CellType) %>%
+  summarise(
+    mean_expr = mean(Expression, na.rm = TRUE),
+    sd        = sd(Expression,   na.rm = TRUE),
+    n         = n(),
+    se        = sd(Expression,   na.rm = TRUE) / sqrt(n()),
+    .groups   = "drop"
+  )
+
+# Tukey HSD; filter to biologically meaningful comparisons
+pvals <- dat_long %>%
+  group_by(Gene) %>%
+  tukey_hsd(Expression ~ Group) %>%
+  mutate(comparison = paste(group1, group2, sep = "-")) %>%
+  filter(p.adj <= 0.05) %>%
+  mutate(p_label = sprintf("p<%1.2g", round(p.adj, 3) + 1e-3)) %>%
+  filter(comparison %in% c(
+    "nonPMC-PMC",
+    "nonPMC+LPS-PMC+LPS",
+    "nonPMC+oxLDL-PMC+oxLDL",
+    "nonPMC+LPS+oxLDL-PMC+LPS+oxLDL",
+    "nonPMC-nonPMC+LPS",
+    "nonPMC-nonPMC+oxLDL",
+    "nonPMC-nonPMC+LPS+oxLDL",
+    "PMC-PMC+LPS",
+    "PMC-PMC+oxLDL",
+    "PMC-PMC+LPS+oxLDL"
+  ))
+
+# Build staggered bracket positions (scaled per gene's y-range)
+brackets <- dat_s %>%
+  group_by(Gene) %>%
+  summarise(max_y = max(mean_expr + se, na.rm = TRUE), .groups = "drop") %>%
+  left_join(pvals, by = "Gene") %>%
+  filter(!is.na(group1), !is.na(group2)) %>%
+  distinct(Gene, group1, group2, .keep_all = TRUE) %>%
+  group_by(Gene) %>%
+  mutate(
+    bracket_id = row_number(),
+    y.position = max_y + bracket_id * max_y * 0.15,  # Stagger heights relative to each gene's max
+    xmin       = group1,
+    xmax       = group2
+  ) %>%
+  ungroup()
+
+p3 <- ggplot(dat_s, aes(x = Group, y = mean_expr, fill = Treatment)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.1)) +
+  geom_errorbar(
+    aes(ymin = mean_expr - se, ymax = mean_expr + se),
+    width    = 0.1,
+    position = position_dodge(width = 0.2),
+    color    = "grey"
+  ) +
+  stat_pvalue_manual(
+    data       = brackets,
+    label      = "p_label",
+    xmin       = "xmin",
+    xmax       = "xmax",
+    y.position = "y.position",
+    size       = 5
+  ) +
+  scale_fill_manual(values = my_color_group) +
+  theme_classic(base_size = 20) +
+  xlab("") + ylab("MFI Fold Change") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~ Gene, scales = "free_y") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+p3
+
+ggsave("Figure 7C.pdf", plot = p3, width = 22, height = 12)
+```
+
+# Figure 8
+```{r}
+my_color_PMC = c("in vitro Mφ"="#529AC9","in vitro PMC Mφ" = "#CC4A74")
+#Figure 
+dat <- readxl::read_xlsx("./Data availability/Figure 8 EndMT.xlsx",sheet = 1)
+dat_long <- dat %>%
+  filter(Y_axis=="Relative fold change") %>%
+  pivot_longer(
+        cols = c("Non_PMC", "PMC"),
+        names_to = "Group",
+        values_to = "Expression"
+      )%>%
+    dplyr::mutate(
+      Group = dplyr::recode(
+        Group,
+        "Non_PMC" = "in vitro Mφ",
+        "PMC"  = "in vitro PMC Mφ"
+      )
+    )
+
+Fig8_A <- ggplot(dat_long, aes(x = Group, y = Expression, fill = Group)) +
+  geom_violin(width = 0.2, alpha = 1, aes(color = Group)) +
+  geom_quasirandom(size = 0.1,alpha = 1,color = "grey40")+
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 1, color="lightgrey",linewidth = 0.2) +
+  scale_fill_manual(values = my_color_PMC) +
+  scale_color_manual(values = my_color_PMC) +
+  facet_wrap(~ Marker, scales = "free_y", ncol = 4) +
+  # paired t-test with p-value adjustment (BH) and formatted labels
+  stat_compare_means(
+    method = "t.test",
+    comparisons = list(c("in vitro Mφ", "in vitro PMC Mφ")),
+    paired = TRUE,
+    p.adjust.method = "fdr",
+    label = "p.adj",
+    label.y.npc = "top",
+    size = 5
+  ) +
+  theme_classic(base_size = 16) +
+  labs(x = NULL, y = "Relative Fold Expression") +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )+
+  scale_y_continuous(expand=c(0.1, 0)) 
+
+Fig8_A
+
+dat_long <- dat %>%
+  filter(Y_axis=="pg/mL") %>%
+  pivot_longer(
+    cols = c("Non_PMC", "PMC"),
+    names_to = "Group",
+    values_to = "Expression"
+  )%>%
+  dplyr::mutate(
+    Group = dplyr::recode(
+      Group,
+      "Non_PMC" = "in vitro Mφ",
+      "PMC"  = "in vitro PMC Mφ"
+    )
+  )
+
+Fig8_B <- ggplot(dat_long, aes(x = Group, y = Expression, fill = Group)) +
+  geom_violin(width = 0.2, alpha = 1, aes(color = Group)) +
+  geom_quasirandom(size = 0.1,alpha = 1,color = "grey40")+
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 1, color="lightgrey",linewidth = 0.2) +
+  scale_fill_manual(values = my_color_PMC) +
+  scale_color_manual(values = my_color_PMC) +
+  facet_wrap(~ Marker, scales = "free_y", ncol = 3) +
+  stat_compare_means(
+    method = "t.test",
+    comparisons = list(c("in vitro Mφ", "in vitro PMC Mφ")),
+    paired = TRUE,
+    p.adjust.method = "fdr",
+    label = "p.adj",      
+    label.y.npc = "top",
+    size = 5
+  ) +
+  theme_classic(base_size = 16) +
+  labs(x = NULL, y = "pg/mL") +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )+
+  scale_y_continuous(expand=c(0.1, 0)) 
+
+Fig8_B
+
+my_color_PMC = c("in vitro Mφ + LPS"="#529AC9", "in vitro PMC Mφ + LPS" = "#CC4A74")
+dat <- readxl::read_xlsx("./Data availability/Figure 8 EndMT.xlsx",sheet = 2)
+dat_long <- dat %>%
+  filter(Y_axis=="Relative fold change") %>%
+  pivot_longer(
+    cols = c("Non_PMC_LPS", "PMC_LPS"),
+    names_to = "Group",
+    values_to = "Expression"
+  )%>%
+  dplyr::mutate(
+    Group = dplyr::recode(
+      Group,
+      "Non_PMC_LPS" = "in vitro Mφ + LPS",
+      "PMC_LPS"  = "in vitro PMC Mφ + LPS"
+    )
+  )
+
+
+
+Fig8_C <- ggplot(dat_long, aes(x = Group, y = Expression, fill = Group)) +
+  geom_violin(width = 0.2, alpha = 1, aes(color = Group)) +
+  geom_quasirandom(size = 0.1,alpha = 1,color = "grey40")+
+  geom_boxplot(width = 0.2, outlier.shape = NA, alpha = 1, color="lightgrey",linewidth = 0.2) +
+  scale_fill_manual(values = my_color_PMC) +
+  scale_color_manual(values = my_color_PMC) +
+  facet_wrap(~ Marker, scales = "free_y", ncol = 3) +
+  # paired t-test with p-value adjustment (BH) and formatted labels
+  stat_compare_means(
+    method = "t.test",
+    comparisons = list(c("in vitro Mφ + LPS", "in vitro PMC Mφ + LPS")),
+    paired = TRUE,
+    p.adjust.method = "fdr",
+    label = "p.adj",
+    label.y.npc = "top",
+    size = 5
+  ) +
+  theme_classic(base_size = 16) +
+  labs(x = NULL, y = "Relative Fold Expression") +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )+
+  scale_y_continuous(expand=c(0.1, 0)) 
+Fig8_C
+
+
+# Combine plots vertically
+combined_plot <-Fig8_B+Fig8_C + plot_layout(guides = "collect") 
+combined_plot <- Fig8_A/combined_plot+ plot_layout(guides = "keep")
+combined_plot
+
+
+
+CairoPDF("Figure 8 A-C.pdf", width = 12, height = 10)
+print(combined_plot)
+dev.off()
+
+```
+
