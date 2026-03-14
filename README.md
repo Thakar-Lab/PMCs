@@ -9,6 +9,6 @@ Ruoqiao Wang (Email: RuoQiao_Wang@URMC.Rochester.edu)
 
 ## 📄 Citation
 
-[Wang, R. H., & Thakar, J. (2026)]([https://academic.oup.com/nargab/article/6/3/lqae124/7770961](https://www.ahajournals.org/doi/10.1161/JAHA.125.046482#sec-1)). Monocytes defined by platelet interactions and oxidative stress signaling underlie HIV-associated atherosclerosis.
+[Wang, R. H., & Thakar, J. (2026)]([https://www.ahajournals.org/doi/10.1161/JAHA.125.046482#sec-1]). Monocytes defined by platelet interactions and oxidative stress signaling underlie HIV-associated atherosclerosis.
 
 
